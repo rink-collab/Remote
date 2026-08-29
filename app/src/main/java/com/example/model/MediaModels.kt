@@ -10,6 +10,8 @@ data class MediaItem(
     val dateModified: Long, // Epoch seconds or millis
     val durationMs: Long = 0L,
     val isVideo: Boolean = false,
+    val bucketName: String = "Internal Storage", // Directory/Album name
+    val relativePath: String = "", // e.g. "DCIM/Camera/"
     val uriString: String? = null, // Host device local uri
     val thumbnailBase64: String? = null, // Received on client device
     val localUri: Uri? = null, // Saved downloaded file on client
@@ -37,6 +39,12 @@ data class MediaItem(
             return String.format("%d:%02d", minutes, seconds)
         }
 }
+
+data class DirectoryGroup(
+    val name: String,
+    val count: Int,
+    val latestItem: MediaItem? = null
+)
 
 enum class MediaFilter(val label: String) {
     ALL("All Media"),

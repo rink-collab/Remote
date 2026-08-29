@@ -146,7 +146,7 @@ class WebRTCManager(
 
             override fun onStateChange() {
                 val state = channel.state()
-                Log.d(TAG, "DataChannel state: $state")
+                Log.d(TAG, "DataChannel state changed: $state")
                 listener.onDataChannelStateChanged(state == DataChannel.State.OPEN)
             }
 
@@ -156,12 +156,18 @@ class WebRTCManager(
                     val bytes = ByteArray(data.remaining())
                     data.get(bytes)
                     val message = String(bytes, StandardCharsets.UTF_8)
+                    Log.d(TAG, "DataChannel received message length: ${message.length}")
                     listener.onMessageReceived(message)
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing incoming data channel buffer", e)
                 }
             }
         })
+
+        if (channel.state() == DataChannel.State.OPEN) {
+            Log.d(TAG, "DataChannel already OPEN upon registration")
+            listener.onDataChannelStateChanged(true)
+        }
     }
 
     fun createOffer(onSuccess: (SessionDescription) -> Unit, onError: (String) -> Unit) {

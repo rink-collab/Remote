@@ -7,6 +7,12 @@ sealed class ProtocolMessage {
 
     data class GetCatalog(val offset: Int = 0, val limit: Int = 200) : ProtocolMessage()
     data class CatalogResponse(val items: List<MediaItem>) : ProtocolMessage()
+    data class CatalogChunk(
+        val items: List<MediaItem>,
+        val chunkIndex: Int,
+        val totalChunks: Int,
+        val totalItems: Int
+    ) : ProtocolMessage()
     data class GetThumbnail(val id: String) : ProtocolMessage()
     data class ThumbnailResponse(val id: String, val base64Data: String) : ProtocolMessage()
     data class DownloadRequest(val id: String) : ProtocolMessage()
@@ -48,6 +54,29 @@ sealed class ProtocolMessage {
                     obj.put("date", item.dateModified)
                     obj.put("duration", item.durationMs)
                     obj.put("isVideo", item.isVideo)
+                    obj.put("bucket", item.bucketName)
+                    obj.put("path", item.relativePath)
+                    array.put(obj)
+                }
+                json.put("items", array)
+            }
+            is CatalogChunk -> {
+                json.put("type", "CATALOG_CHUNK")
+                json.put("chunkIndex", chunkIndex)
+                json.put("totalChunks", totalChunks)
+                json.put("totalItems", totalItems)
+                val array = JSONArray()
+                items.forEach { item ->
+                    val obj = JSONObject()
+                    obj.put("id", item.id)
+                    obj.put("name", item.displayName)
+                    obj.put("mime", item.mimeType)
+                    obj.put("size", item.size)
+                    obj.put("date", item.dateModified)
+                    obj.put("duration", item.durationMs)
+                    obj.put("isVideo", item.isVideo)
+                    obj.put("bucket", item.bucketName)
+                    obj.put("path", item.relativePath)
                     array.put(obj)
                 }
                 json.put("items", array)
@@ -116,11 +145,39 @@ sealed class ProtocolMessage {
                                     size = obj.optLong("size", 0L),
                                     dateModified = obj.optLong("date", 0L),
                                     durationMs = obj.optLong("duration", 0L),
-                                    isVideo = obj.optBoolean("isVideo", false)
+                                    isVideo = obj.optBoolean("isVideo", false),
+                                    bucketName = obj.optString("bucket", "Storage"),
+                                    relativePath = obj.optString("path", "")
                                 )
                             )
                         }
                         CatalogResponse(list)
+                    }
+                    "CATALOG_CHUNK" -> {
+                        val array = json.optJSONArray("items") ?: JSONArray()
+                        val list = mutableListOf<MediaItem>()
+                        for (i in 0 until array.length()) {
+                            val obj = array.getJSONObject(i)
+                            list.add(
+                                MediaItem(
+                                    id = obj.getString("id"),
+                                    displayName = obj.getString("name"),
+                                    mimeType = obj.optString("mime", "image/jpeg"),
+                                    size = obj.optLong("size", 0L),
+                                    dateModified = obj.optLong("date", 0L),
+                                    durationMs = obj.optLong("duration", 0L),
+                                    isVideo = obj.optBoolean("isVideo", false),
+                                    bucketName = obj.optString("bucket", "Storage"),
+                                    relativePath = obj.optString("path", "")
+                                )
+                            )
+                        }
+                        CatalogChunk(
+                            items = list,
+                            chunkIndex = json.optInt("chunkIndex", 0),
+                            totalChunks = json.optInt("totalChunks", 1),
+                            totalItems = json.optInt("totalItems", list.size)
+                        )
                     }
                     "GET_THUMBNAIL" -> GetThumbnail(json.getString("id"))
                     "THUMBNAIL_RESP" -> ThumbnailResponse(

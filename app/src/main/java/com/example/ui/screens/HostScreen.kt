@@ -171,7 +171,9 @@ fun HostScreen(
                     photosCount = photosCount,
                     videosCount = videosCount,
                     totalSize = totalSizeFormatted,
-                    statusMessage = statusMessage
+                    statusMessage = statusMessage,
+                    onRescan = { viewModel.refreshLocalMedia() },
+                    onSeedDemo = { viewModel.generateDemoVaultOnHost() }
                 )
             }
 
@@ -337,7 +339,9 @@ private fun MediaStatsCard(
     photosCount: Int,
     videosCount: Int,
     totalSize: String,
-    statusMessage: String
+    statusMessage: String,
+    onRescan: () -> Unit,
+    onSeedDemo: () -> Unit
 ) {
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -346,13 +350,32 @@ private fun MediaStatsCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "Shared Media Vault",
-                style = MaterialTheme.typography.titleSmall.copy(
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Shared Media Vault",
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
                 )
-            )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    IconButton(
+                        onClick = onRescan,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Rescan Media",
+                            tint = Cyan400,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -400,6 +423,18 @@ private fun MediaStatsCard(
                             color = Slate100.copy(alpha = 0.8f)
                         )
                     )
+                }
+            }
+
+            if (photosCount == 0 && videosCount == 0) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Button(
+                    onClick = onSeedDemo,
+                    colors = ButtonDefaults.buttonColors(containerColor = Indigo600),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Seed Sample Media Files (Demo)", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }

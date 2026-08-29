@@ -25,9 +25,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -41,6 +43,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.Button
@@ -58,6 +61,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -84,6 +89,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.ConnectionStatus
+import com.example.model.DirectoryGroup
 import com.example.model.MediaFilter
 import com.example.model.MediaItem
 import com.example.model.TransferProgress
@@ -116,6 +122,8 @@ fun ClientGalleryScreen(
     val roomCode by viewModel.roomCode.collectAsState()
     val filteredItems by viewModel.filteredMediaItems.collectAsState()
     val selectedFilter by viewModel.selectedFilter.collectAsState()
+    val selectedDirectory by viewModel.selectedDirectory.collectAsState()
+    val directoryGroups by viewModel.directoryGroups.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val transferMap by viewModel.transferMap.collectAsState()
     val selectedItemForDetail by viewModel.selectedItemForDetail.collectAsState()
@@ -171,7 +179,7 @@ fun ClientGalleryScreen(
                             )
                             if (isConnected) {
                                 Text(
-                                    text = "Room: $roomCode • ${filteredItems.size} items",
+                                    text = "Room: $roomCode • ${filteredItems.size} files available",
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         color = Cyan400,
                                         fontSize = 11.sp
@@ -190,6 +198,15 @@ fun ClientGalleryScreen(
                         }
                     },
                     actions = {
+                        if (isConnected) {
+                            IconButton(onClick = { viewModel.refreshMediaCatalog() }) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Refresh Catalog",
+                                    tint = Cyan400
+                                )
+                            }
+                        }
                         ConnectionBadge(
                             status = connectionStatus,
                             modifier = Modifier.padding(end = 12.dp)
@@ -264,17 +281,23 @@ fun ClientGalleryScreen(
             } else {
                 // Connected Gallery Grid
                 Column(modifier = Modifier.fillMaxSize()) {
-                    // Search & Filter Row
+                    // Search, Filter & Directory Controls Row
                     GalleryControlsRow(
                         searchQuery = searchQuery,
                         onSearchChange = { viewModel.setSearchQuery(it) },
                         selectedFilter = selectedFilter,
-                        onFilterSelect = { viewModel.setFilter(it) }
+                        onFilterSelect = { viewModel.setFilter(it) },
+                        directoryGroups = directoryGroups,
+                        selectedDirectory = selectedDirectory,
+                        onDirectorySelect = { viewModel.selectDirectory(it) }
                     )
 
                     // Media Grid
                     if (filteredItems.isEmpty()) {
-                        EmptyGalleryView(searchQuery = searchQuery)
+                        EmptyGalleryView(
+                            searchQuery = searchQuery,
+                            onRefresh = { viewModel.refreshMediaCatalog() }
+                        )
                     } else {
                         LazyVerticalGrid(
                             columns = GridCells.Adaptive(minSize = 110.dp),
@@ -512,7 +535,10 @@ private fun GalleryControlsRow(
     searchQuery: String,
     onSearchChange: (String) -> Unit,
     selectedFilter: MediaFilter,
-    onFilterSelect: (MediaFilter) -> Unit
+    onFilterSelect: (MediaFilter) -> Unit,
+    directoryGroups: List<DirectoryGroup>,
+    selectedDirectory: String?,
+    onDirectorySelect: (String?) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -524,7 +550,7 @@ private fun GalleryControlsRow(
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearchChange,
-            placeholder = { Text("Search photos & videos...", color = Slate600) },
+            placeholder = { Text("Search files, albums, folders...", color = Slate600) },
             leadingIcon = {
                 Icon(
                     imageVector = Icons.Default.Search,
@@ -560,7 +586,7 @@ private fun GalleryControlsRow(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Filter chips
+        // Type filter chips (All, Photos, Videos)
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
@@ -591,6 +617,66 @@ private fun GalleryControlsRow(
                     ),
                     shape = RoundedCornerShape(8.dp)
                 )
+            }
+        }
+
+        // Directory / Album folders scrollable chips row (if directory groups exist)
+        if (directoryGroups.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // "All Folders" chip
+                item {
+                    val isAllSelected = selectedDirectory == null
+                    SuggestionChip(
+                        onClick = { onDirectorySelect(null) },
+                        label = {
+                            Text(
+                                text = "All Folders (${directoryGroups.sumOf { it.count }})",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isAllSelected) Cyan400 else Slate600
+                                )
+                            )
+                        },
+                        colors = SuggestionChipDefaults.suggestionChipColors(
+                            containerColor = if (isAllSelected) Cyan600.copy(alpha = 0.25f) else DarkBackground
+                        ),
+                        border = SuggestionChipDefaults.suggestionChipBorder(
+                            enabled = true,
+                            borderColor = if (isAllSelected) Cyan400 else Slate800
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+
+                items(directoryGroups, key = { it.name }) { dir ->
+                    val isDirSelected = selectedDirectory.equals(dir.name, ignoreCase = true)
+                    SuggestionChip(
+                        onClick = {
+                            if (isDirSelected) onDirectorySelect(null) else onDirectorySelect(dir.name)
+                        },
+                        label = {
+                            Text(
+                                text = "${dir.name} (${dir.count})",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = if (isDirSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isDirSelected) Cyan400 else Slate100
+                                )
+                            )
+                        },
+                        colors = SuggestionChipDefaults.suggestionChipColors(
+                            containerColor = if (isDirSelected) Cyan600.copy(alpha = 0.25f) else DarkSurfaceVariant
+                        ),
+                        border = SuggestionChipDefaults.suggestionChipBorder(
+                            enabled = true,
+                            borderColor = if (isDirSelected) Cyan400 else Slate800
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
             }
         }
     }
@@ -702,7 +788,10 @@ private fun GalleryGridItem(
 }
 
 @Composable
-private fun EmptyGalleryView(searchQuery: String) {
+private fun EmptyGalleryView(
+    searchQuery: String,
+    onRefresh: () -> Unit
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -718,13 +807,27 @@ private fun EmptyGalleryView(searchQuery: String) {
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = if (searchQuery.isNotEmpty()) "No media matching \"$searchQuery\"" else "No media found on secondary device",
+                text = if (searchQuery.isNotEmpty()) "No media matching \"$searchQuery\"" else "No media received from secondary device yet",
                 style = MaterialTheme.typography.bodyMedium.copy(
                     color = Slate600,
                     fontWeight = FontWeight.Medium
                 ),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = onRefresh,
+                colors = ButtonDefaults.buttonColors(containerColor = Cyan600),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Request Media Catalog")
+            }
         }
     }
 }

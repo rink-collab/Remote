@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.model.ActivityLog
 import com.example.model.AppRole
 import com.example.model.ConnectionStatus
+import com.example.model.DirectoryGroup
 import com.example.model.MediaFilter
 import com.example.model.MediaItem
 import com.example.model.ProtocolMessage
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.webrtc.PeerConnection.PeerConnectionState
@@ -61,24 +63,44 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
     private val _selectedFilter = MutableStateFlow(MediaFilter.ALL)
     val selectedFilter: StateFlow<MediaFilter> = _selectedFilter.asStateFlow()
 
+    private val _selectedDirectory = MutableStateFlow<String?>(null) // null = all directories
+    val selectedDirectory: StateFlow<String?> = _selectedDirectory.asStateFlow()
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    val directoryGroups: StateFlow<List<DirectoryGroup>> = _rawMediaItems.map { items ->
+        items.groupBy { it.bucketName }
+            .map { (bucket, list) ->
+                DirectoryGroup(
+                    name = bucket,
+                    count = list.size,
+                    latestItem = list.firstOrNull()
+                )
+            }
+            .sortedByDescending { it.count }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val filteredMediaItems: StateFlow<List<MediaItem>> = combine(
         _rawMediaItems,
         _selectedFilter,
+        _selectedDirectory,
         _searchQuery
-    ) { items, filter, query ->
+    ) { items, filter, selectedDir, query ->
         items.filter { item ->
             val matchesFilter = when (filter) {
                 MediaFilter.ALL -> true
                 MediaFilter.PHOTOS -> !item.isVideo
                 MediaFilter.VIDEOS -> item.isVideo
             }
-            val matchesQuery = if (query.isBlank()) true else {
-                item.displayName.contains(query.trim(), ignoreCase = true)
+            val matchesDir = if (selectedDir == null) true else {
+                item.bucketName.equals(selectedDir, ignoreCase = true)
             }
-            matchesFilter && matchesQuery
+            val matchesQuery = if (query.isBlank()) true else {
+                item.displayName.contains(query.trim(), ignoreCase = true) ||
+                    item.bucketName.contains(query.trim(), ignoreCase = true)
+            }
+            matchesFilter && matchesDir && matchesQuery
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -119,7 +141,42 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
         _rawMediaItems.value = emptyList()
         _transferMap.value = emptyMap()
         _selectedItemIds.value = emptySet()
+        _selectedDirectory.value = null
         _isSelectionMode.value = false
+    }
+
+    fun selectDirectory(dir: String?) {
+        _selectedDirectory.value = dir
+    }
+
+    fun refreshLocalMedia() {
+        viewModelScope.launch {
+            val localMedia = scanner.queryAllMedia()
+            _rawMediaItems.value = localMedia
+            hostLocalMediaMap.clear()
+            localMedia.forEach { hostLocalMediaMap[it.id] = it }
+            addLog("Scanned ${localMedia.size} local files in vault", isSuccess = true)
+        }
+    }
+
+    fun generateDemoVaultOnHost() {
+        viewModelScope.launch {
+            val samples = scanner.generateSampleVault()
+            val combined = (scanner.queryAllMedia() + samples).distinctBy { it.id }
+            _rawMediaItems.value = combined
+            hostLocalMediaMap.clear()
+            combined.forEach { hostLocalMediaMap[it.id] = it }
+            addLog("Generated ${samples.size} demo vault files for instant P2P streaming", isSuccess = true)
+        }
+    }
+
+    fun refreshMediaCatalog() {
+        if (_appRole.value == AppRole.CLIENT) {
+            _statusMessage.value = "Requesting catalog from host..."
+            requestMediaCatalog()
+        } else if (_appRole.value == AppRole.HOST) {
+            refreshLocalMedia()
+        }
     }
 
     // --- Host Logic ---
@@ -130,8 +187,13 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
             _statusMessage.value = "Indexing local media..."
             addLog("Scanning local photos and videos...")
 
-            // 1. Scan local media
-            val localMedia = scanner.queryAllMedia()
+            // 1. Scan local media (and generate demo media if device is completely empty)
+            var localMedia = scanner.queryAllMedia()
+            if (localMedia.isEmpty()) {
+                addLog("Storage has no media yet. Seeding demo vault...")
+                val demoMedia = scanner.generateSampleVault()
+                localMedia = demoMedia
+            }
             _rawMediaItems.value = localMedia
             hostLocalMediaMap.clear()
             localMedia.forEach { hostLocalMediaMap[it.id] = it }
@@ -282,9 +344,16 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
             _statusMessage.value = "Ready to stream media"
             addLog("WebRTC Data Channel OPEN", isSuccess = true)
 
-            // If Client, request catalog immediately
+            // If Client, request catalog immediately and schedule fallback retry if catalog is still empty
             if (_appRole.value == AppRole.CLIENT) {
                 requestMediaCatalog()
+                viewModelScope.launch {
+                    delay(2000)
+                    if (_connectionStatus.value == ConnectionStatus.CONNECTED && _rawMediaItems.value.isEmpty()) {
+                        addLog("Retrying media catalog request...")
+                        requestMediaCatalog()
+                    }
+                }
             }
         } else {
             addLog("Data Channel Closed")
@@ -300,6 +369,9 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
             }
             is ProtocolMessage.CatalogResponse -> {
                 handleCatalogResponse(proto.items)
+            }
+            is ProtocolMessage.CatalogChunk -> {
+                handleCatalogChunk(proto)
             }
             is ProtocolMessage.GetThumbnail -> {
                 handleGetThumbnailRequest(proto.id)
@@ -332,16 +404,77 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
 
     // --- Message Handling Logic ---
 
-    private fun requestMediaCatalog() {
-        addLog("Requesting media catalog from secondary phone...")
+    fun requestMediaCatalog() {
+        addLog("Requesting media catalog & directories from secondary phone...")
         val msg = ProtocolMessage.GetCatalog(0, 500)
         webrtcManager.sendMessage(msg.toJson())
     }
 
     private fun handleGetCatalogRequest() {
-        addLog("Client requested media catalog. Sending ${_rawMediaItems.value.size} items...")
-        val msg = ProtocolMessage.CatalogResponse(_rawMediaItems.value)
-        webrtcManager.sendMessage(msg.toJson())
+        viewModelScope.launch {
+            // 1. If host has no items (e.g. storage permissions were just granted or MediaStore returned 0 items), rescan!
+            if (_rawMediaItems.value.isEmpty()) {
+                val scanned = scanner.queryAllMedia()
+                if (scanned.isNotEmpty()) {
+                    _rawMediaItems.value = scanned
+                    hostLocalMediaMap.clear()
+                    scanned.forEach { hostLocalMediaMap[it.id] = it }
+                } else {
+                    // Generate sample vault on host so user can test seamlessly
+                    val sampleVault = scanner.generateSampleVault()
+                    _rawMediaItems.value = sampleVault
+                    hostLocalMediaMap.clear()
+                    sampleVault.forEach { hostLocalMediaMap[it.id] = it }
+                }
+            }
+
+            val items = _rawMediaItems.value
+            addLog("Client requested media catalog. Transmitting ${items.size} items in chunks...")
+
+            if (items.isEmpty()) {
+                val msg = ProtocolMessage.CatalogResponse(emptyList())
+                webrtcManager.sendMessage(msg.toJson())
+                return@launch
+            }
+
+            // Chunk in batches of 15 items (safe < 4KB per chunk for WebRTC DataChannel)
+            val chunkSize = 15
+            val chunks = items.chunked(chunkSize)
+            val totalChunks = chunks.size
+            val totalItems = items.size
+
+            chunks.forEachIndexed { index, chunkList ->
+                val chunkMsg = ProtocolMessage.CatalogChunk(
+                    items = chunkList,
+                    chunkIndex = index,
+                    totalChunks = totalChunks,
+                    totalItems = totalItems
+                )
+                val sent = webrtcManager.sendMessage(chunkMsg.toJson())
+                if (!sent) {
+                    addLog("Warning: Chunk $index/$totalChunks send failed", isError = true)
+                }
+                delay(20) // pacing to prevent DataChannel buffer overflow
+            }
+            addLog("Finished transmitting catalog chunks to client.", isSuccess = true)
+        }
+    }
+
+    private fun handleCatalogChunk(chunk: ProtocolMessage.CatalogChunk) {
+        val current = _rawMediaItems.value.toMutableList()
+        if (chunk.chunkIndex == 0) {
+            current.clear()
+        }
+        val existingIds = current.map { it.id }.toSet()
+        val newItems = chunk.items.filter { !existingIds.contains(it.id) }
+        current.addAll(newItems)
+        _rawMediaItems.value = current
+        _statusMessage.value = "Streaming catalog: ${current.size} of ${chunk.totalItems} files"
+        addLog("Catalog chunk ${chunk.chunkIndex + 1}/${chunk.totalChunks} received (${current.size} files)")
+        if (chunk.chunkIndex == chunk.totalChunks - 1) {
+            _statusMessage.value = "Ready • ${current.size} items loaded"
+            addLog("Media catalog complete: ${current.size} files across directories", isSuccess = true)
+        }
     }
 
     private fun handleCatalogResponse(items: List<MediaItem>) {

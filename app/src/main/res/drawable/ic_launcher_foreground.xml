@@ -1,0 +1,30 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Center group inside 66dp safe zone (21dp to 87dp) -->
+    <!-- Cloud base -->
+    <path
+        android:pathData="M54,34 C46,34 39,40 37.5,47.5 C32,48.5 28,53.5 28,59.5 C28,66.4 33.6,72 40.5,72 L69,72 C75.1,72 80,67.1 80,61 C80,55.3 75.6,50.7 70,50.1 C68.8,41 62.3,34 54,34 Z"
+        android:fillColor="#FFFFFF" />
+    <!-- Gallery photo card inside cloud -->
+    <path
+        android:pathData="M42,50 L66,50 C68.2,50 70,51.8 70,54 L70,68 C70,70.2 68.2,72 66,72 L42,72 C39.8,72 38,70.2 38,68 L38,54 C38,51.8 39.8,50 42,50 Z"
+        android:fillColor="#0284C7" />
+    <!-- Photo mountains and sun -->
+    <path
+        android:pathData="M43,67 L65,67 L59,59 L53,65 L48,60 Z"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M48,56 C49.1,56 50,55.1 50,54 C50,52.9 49.1,52 48,52 C46.9,52 46,52.9 46,54 C46,55.1 46.9,56 48,56 Z"
+        android:fillColor="#FBBF24" />
+    <!-- P2P connection arrows -->
+    <path
+        android:pathData="M34,44 L39,39 L39,42 L47,42 L47,46 L39,46 L39,49 Z"
+        android:fillColor="#38BDF8" />
+    <path
+        android:pathData="M74,44 L69,49 L69,46 L61,46 L61,42 L69,42 L69,39 Z"
+        android:fillColor="#38BDF8" />
+</vector>

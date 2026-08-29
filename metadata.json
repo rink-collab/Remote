@@ -1,0 +1,7 @@
+{
+  "name": "Peer Media",
+  "description": "P2P media cloud to browse and download photos and videos from your secondary phone via WebRTC and Firebase Realtime Database.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

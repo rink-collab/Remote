@@ -168,13 +168,13 @@ fun MediaThumbnail(
             }
         }
 
-        // Video Badge
+        // Video Badge (Top Left)
         if (isVideo) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(4.dp)
-                    .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                    .align(Alignment.TopStart)
+                    .padding(5.dp)
+                    .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(4.dp))
                     .padding(horizontal = 5.dp, vertical = 2.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

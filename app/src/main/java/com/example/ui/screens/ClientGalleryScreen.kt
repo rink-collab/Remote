@@ -766,12 +766,12 @@ private fun GalleryGridItem(
             )
         }
 
-        // Downloaded Indicator Badge
+        // Downloaded Indicator Badge (Top Right when not in selection mode, or offset)
         if (item.isDownloaded || item.localUri != null) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(4.dp)
+                    .align(Alignment.TopEnd)
+                    .padding(if (isSelectionMode) 30.dp else 4.dp, 4.dp, 4.dp, 4.dp)
                     .size(20.dp)
                     .clip(CircleShape)
                     .background(Emerald500),

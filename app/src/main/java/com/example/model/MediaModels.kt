@@ -104,6 +104,18 @@ data class TransferProgress(
         get() = (progressFraction * 100).toInt()
 }
 
+data class HostDevice(
+    val id: String, // Room/Host ID (unique)
+    val name: String, // e.g. "Xiaomi Redmi Note 7" or "Pixel 8"
+    val model: String = "",
+    val isOnline: Boolean = true,
+    val mediaCount: Int = 0,
+    val photosCount: Int = 0,
+    val videosCount: Int = 0,
+    val audioCount: Int = 0,
+    val lastSeen: Long = System.currentTimeMillis()
+)
+
 data class ActivityLog(
     val id: String = java.util.UUID.randomUUID().toString(),
     val timestamp: Long = System.currentTimeMillis(),

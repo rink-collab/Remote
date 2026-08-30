@@ -1,6 +1,7 @@
 package com.example.signaling
 
 import android.util.Log
+import com.example.model.HostDevice
 import com.google.firebase.database.ChildEventListener
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
@@ -32,19 +33,25 @@ class FirebaseSignalingManager {
     private var offerListener: ValueEventListener? = null
     private var answerListener: ValueEventListener? = null
     private var candidateListener: ChildEventListener? = null
+    private var hostsDiscoveryListener: ValueEventListener? = null
     private var currentRoomRef: DatabaseReference? = null
 
-    fun generateRoomCode(): String {
-        val chars = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
-        return (1..6).map { chars.random() }.joinToString("")
+    fun generateHostId(): String {
+        return "host_" + java.util.UUID.randomUUID().toString().take(8)
     }
 
     fun isFirebaseAvailable(): Boolean {
         return roomsRef != null
     }
 
-    fun hostRoom(
+    fun hostRoomWithDeviceInfo(
         roomId: String,
+        deviceName: String,
+        deviceModel: String,
+        mediaCount: Int,
+        photosCount: Int,
+        videosCount: Int,
+        audioCount: Int,
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
@@ -55,9 +62,17 @@ class FirebaseSignalingManager {
 
         currentRoomRef = ref.child(roomId)
         val roomData = mapOf(
+            "hostId" to roomId,
+            "deviceName" to deviceName,
+            "deviceModel" to deviceModel,
+            "mediaCount" to mediaCount,
+            "photosCount" to photosCount,
+            "videosCount" to videosCount,
+            "audioCount" to audioCount,
             "hostPresent" to true,
             "clientPresent" to false,
-            "createdAt" to System.currentTimeMillis()
+            "createdAt" to System.currentTimeMillis(),
+            "lastSeen" to System.currentTimeMillis()
         )
 
         currentRoomRef?.setValue(roomData)
@@ -66,8 +81,82 @@ class FirebaseSignalingManager {
                 onSuccess()
             }
             ?.addOnFailureListener { e ->
-                onError(e.localizedMessage ?: "Failed to create room in Firebase")
+                onError(e.localizedMessage ?: "Failed to broadcast host in Firebase")
             }
+    }
+
+    fun listenForOnlineHosts(onHostsUpdated: (List<HostDevice>) -> Unit): ValueEventListener? {
+        val ref = roomsRef ?: return null
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val hosts = mutableListOf<HostDevice>()
+                for (child in snapshot.children) {
+                    val hostPresent = child.child("hostPresent").getValue(Boolean::class.java) ?: false
+                    val createdAt = child.child("createdAt").getValue(Long::class.java) ?: 0L
+                    if (hostPresent) {
+                        val id = child.child("hostId").getValue(String::class.java) ?: (child.key ?: "")
+                        val name = child.child("deviceName").getValue(String::class.java) ?: "Peer Host Device"
+                        val model = child.child("deviceModel").getValue(String::class.java) ?: ""
+                        val mediaCount = child.child("mediaCount").getValue(Int::class.java) ?: 0
+                        val photosCount = child.child("photosCount").getValue(Int::class.java) ?: 0
+                        val videosCount = child.child("videosCount").getValue(Int::class.java) ?: 0
+                        val audioCount = child.child("audioCount").getValue(Int::class.java) ?: 0
+                        val lastSeen = child.child("lastSeen").getValue(Long::class.java) ?: createdAt
+
+                        if (id.isNotEmpty()) {
+                            hosts.add(
+                                HostDevice(
+                                    id = id,
+                                    name = name,
+                                    model = model,
+                                    isOnline = true,
+                                    mediaCount = mediaCount,
+                                    photosCount = photosCount,
+                                    videosCount = videosCount,
+                                    audioCount = audioCount,
+                                    lastSeen = lastSeen
+                                )
+                            )
+                        }
+                    }
+                }
+                // Sort by newest first
+                hosts.sortByDescending { it.lastSeen }
+                onHostsUpdated(hosts)
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                Log.e(TAG, "Error discovering online hosts: ${error.message}")
+            }
+        }
+        hostsDiscoveryListener = listener
+        ref.addValueEventListener(listener)
+        return listener
+    }
+
+    fun stopListeningForOnlineHosts() {
+        hostsDiscoveryListener?.let {
+            roomsRef?.removeEventListener(it)
+            hostsDiscoveryListener = null
+        }
+    }
+
+    fun hostRoom(
+        roomId: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        hostRoomWithDeviceInfo(
+            roomId = roomId,
+            deviceName = "Peer Device",
+            deviceModel = "",
+            mediaCount = 0,
+            photosCount = 0,
+            videosCount = 0,
+            audioCount = 0,
+            onSuccess = onSuccess,
+            onError = onError
+        )
     }
 
     fun joinRoom(

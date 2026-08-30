@@ -23,6 +23,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Sensors
+import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Error
@@ -92,6 +95,7 @@ fun HostScreen(
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val statusMessage by viewModel.statusMessage.collectAsState()
     val roomCode by viewModel.roomCode.collectAsState()
+    val myHostDeviceName by viewModel.myHostDeviceName.collectAsState()
     val rawMediaItems by viewModel.rawMediaItems.collectAsState()
     val transferMap by viewModel.transferMap.collectAsState()
     val activityLogs by viewModel.activityLogs.collectAsState()
@@ -115,7 +119,7 @@ fun HostScreen(
                             )
                         )
                         Text(
-                            text = "Secondary Device",
+                            text = "Device: $myHostDeviceName",
                             style = MaterialTheme.typography.bodySmall.copy(
                                 color = Indigo400,
                                 fontSize = 11.sp
@@ -152,18 +156,11 @@ fun HostScreen(
         ) {
             item {
                 Spacer(modifier = Modifier.height(4.dp))
-                // Room Code Card
-                RoomCodeCard(
-                    roomCode = roomCode,
-                    onCopy = {
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clip = ClipData.newPlainText("Peer Room Code", roomCode)
-                        clipboard.setPrimaryClip(clip)
-                        Toast.makeText(context, "Room code copied to clipboard", Toast.LENGTH_SHORT).show()
-                    },
-                    onRefresh = {
-                        viewModel.startHosting()
-                    }
+                // Host Broadcasting Status Card
+                HostBroadcastingCard(
+                    deviceName = myHostDeviceName,
+                    status = connectionStatus,
+                    onRestart = { viewModel.startHosting() }
                 )
             }
 
@@ -239,99 +236,112 @@ fun HostScreen(
 }
 
 @Composable
-private fun RoomCodeCard(
-    roomCode: String,
-    onCopy: () -> Unit,
-    onRefresh: () -> Unit
+private fun HostBroadcastingCard(
+    deviceName: String,
+    status: ConnectionStatus,
+    onRestart: () -> Unit
 ) {
+    val isConnected = status == ConnectionStatus.CONNECTED
+
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
-        border = BorderStroke(1.dp, Indigo500.copy(alpha = 0.4f)),
-        modifier = Modifier.fillMaxWidth()
+        border = BorderStroke(1.dp, if (isConnected) Emerald500.copy(alpha = 0.5f) else Indigo500.copy(alpha = 0.4f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("host_broadcasting_card")
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
-                text = "PAIRING ROOM CODE",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = Indigo400,
-                    letterSpacing = 1.5.sp
-                )
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
+            // Live pulsing beacon badge
             Surface(
-                color = DarkBackground,
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, Slate800),
-                modifier = Modifier.padding(horizontal = 8.dp)
+                color = if (isConnected) Emerald500.copy(alpha = 0.15f) else Indigo500.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, if (isConnected) Emerald500.copy(alpha = 0.3f) else Indigo400.copy(alpha = 0.3f))
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(if (isConnected) Emerald500 else Cyan400)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (roomCode.isNotEmpty()) roomCode else "...",
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            fontWeight = FontWeight.ExtraBold,
-                            fontFamily = FontFamily.Monospace,
-                            color = Cyan400,
-                            letterSpacing = 4.sp
+                        text = if (isConnected) "CONNECTED TO PRIMARY DEVICE" else "ONLINE & READY TO CONNECT",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = if (isConnected) Emerald500 else Cyan400,
+                            letterSpacing = 1.2.sp
                         )
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(Indigo600, Cyan600)
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Sensors,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "Enter this 6-digit code on your primary device to start browsing.",
-                style = MaterialTheme.typography.bodySmall.copy(
-                    color = Slate100.copy(alpha = 0.7f),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                text = deviceName,
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
                 )
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = if (isConnected) "Streaming live gallery to connected primary device." else "This device is broadcasting automatically. Tap on this device in the Client app to connect directly without PIN.",
+                style = MaterialTheme.typography.bodySmall.copy(
+                    color = Slate100.copy(alpha = 0.75f),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    lineHeight = 18.sp
+                ),
+                modifier = Modifier.padding(horizontal = 8.dp)
             )
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            Button(
+                onClick = onRestart,
+                colors = ButtonDefaults.buttonColors(containerColor = Slate800),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.testTag("refresh_broadcast_button")
             ) {
-                Button(
-                    onClick = onCopy,
-                    colors = ButtonDefaults.buttonColors(containerColor = Indigo600),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.testTag("copy_room_code_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ContentCopy,
-                        contentDescription = "Copy",
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Copy Code")
-                }
-
-                Button(
-                    onClick = onRefresh,
-                    colors = ButtonDefaults.buttonColors(containerColor = Slate800),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Regenerate",
-                        tint = Slate100,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Regenerate", color = Slate100)
-                }
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Re-broadcast",
+                    tint = Slate100,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Re-broadcast Device", color = Slate100)
             }
         }
     }

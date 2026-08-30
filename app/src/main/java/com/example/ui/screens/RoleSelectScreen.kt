@@ -140,7 +140,7 @@ fun RoleSelectScreen(
             RoleActionCard(
                 title = "Primary Device (Client)",
                 subtitle = "Browse & Download Media",
-                description = "Connect to your secondary phone using a 6-digit room code. Browse photos with lazy-loading thumbnails and download files on demand.",
+                description = "Discover online secondary phones and connect with 1 tap (no PIN needed). Browse photos with lazy-loading thumbnails and download files on demand.",
                 icon = Icons.Default.CloudDownload,
                 accentColor = Cyan400,
                 testTag = "role_client_button",
@@ -153,7 +153,7 @@ fun RoleSelectScreen(
             RoleActionCard(
                 title = "Secondary Device (Host)",
                 subtitle = "Share Phone's Media",
-                description = "Turn this phone into a media vault. Indexes local photos/videos and streams them directly over WebRTC Data Channel.",
+                description = "Turn this phone into a media vault. Starts broadcasting automatically when opened, indexing local photos/videos/audio to stream over WebRTC.",
                 icon = Icons.Default.Share,
                 accentColor = Indigo400,
                 testTag = "role_host_button",

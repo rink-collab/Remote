@@ -25,10 +25,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -40,13 +42,17 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Sensors
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -105,6 +111,7 @@ import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceVariant
 import com.example.ui.theme.Emerald500
+import com.example.ui.theme.Indigo500
 import com.example.ui.theme.Rose500
 import com.example.ui.theme.Slate100
 import com.example.ui.theme.Slate600
@@ -127,6 +134,8 @@ fun ClientGalleryScreen(
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val statusMessage by viewModel.statusMessage.collectAsState()
     val roomCode by viewModel.roomCode.collectAsState()
+    val onlineHosts by viewModel.onlineHosts.collectAsState()
+    val isSearchingHosts by viewModel.isSearchingHosts.collectAsState()
     val rawMediaItems by viewModel.rawMediaItems.collectAsState()
     val selectedFilter by viewModel.selectedFilter.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
@@ -321,12 +330,14 @@ fun ClientGalleryScreen(
                 .padding(innerPadding)
         ) {
             if (!isConnected) {
-                // Join Room Form
-                ConnectRoomView(
-                    initialCode = roomCode,
+                // Online Discovered Devices List (Direct 1-tap connection, No PIN required)
+                OnlineDevicesListView(
+                    onlineHosts = onlineHosts,
+                    isSearching = isSearchingHosts,
                     status = connectionStatus,
                     statusMessage = statusMessage,
-                    onConnect = { code -> viewModel.joinRoomAsClient(code) }
+                    onSelectDevice = { host -> viewModel.connectToHost(host) },
+                    onRefresh = { viewModel.startHostDiscovery() }
                 )
             } else {
                 // Connected Pure Folder Hierarchy Browser
@@ -912,181 +923,308 @@ private fun EmptyFolderView(
 }
 
 @Composable
-private fun ConnectRoomView(
-    initialCode: String,
+private fun OnlineDevicesListView(
+    onlineHosts: List<com.example.model.HostDevice>,
+    isSearching: Boolean,
     status: ConnectionStatus,
     statusMessage: String,
-    onConnect: (String) -> Unit
+    onSelectDevice: (com.example.model.HostDevice) -> Unit,
+    onRefresh: () -> Unit
 ) {
-    var inputCode by remember(initialCode) { mutableStateOf(initialCode) }
-    val focusManager = LocalFocusManager.current
-    val isLoading = status == ConnectionStatus.CONNECTING_FIREBASE || status == ConnectionStatus.CONNECTING_WEBRTC
+    val isConnecting = status == ConnectionStatus.CONNECTING_FIREBASE || status == ConnectionStatus.CONNECTING_WEBRTC
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Card(
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
-            border = BorderStroke(1.dp, Cyan400.copy(alpha = 0.3f)),
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Header Section
+        Surface(
+            color = DarkSurfaceVariant,
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, Slate800),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(54.dp)
-                        .clip(CircleShape)
-                        .background(Cyan400.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PhotoLibrary,
-                        contentDescription = null,
-                        tint = Cyan400,
-                        modifier = Modifier.size(28.dp)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Available Host Devices",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = if (onlineHosts.isNotEmpty()) "${onlineHosts.size} device(s) ready for 1-tap connect" else "Scanning local network...",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = if (onlineHosts.isNotEmpty()) Cyan400 else Slate600,
+                            fontSize = 12.sp
+                        )
                     )
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
-
-                Text(
-                    text = "Pair with Secondary Device",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
+                IconButton(
+                    onClick = onRefresh,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Refresh Devices",
+                        tint = Cyan400,
+                        modifier = Modifier.size(20.dp)
                     )
-                )
+                }
+            }
+        }
 
-                Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-                Text(
-                    text = "Enter the 6-digit Room Code shown on your secondary phone.",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = Slate600,
-                        textAlign = TextAlign.Center
+        // Connecting State Banner
+        if (isConnecting) {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = Cyan600.copy(alpha = 0.25f)),
+                border = BorderStroke(1.dp, Cyan400.copy(alpha = 0.6f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    CircularProgressIndicator(
+                        color = Cyan400,
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.5.dp
                     )
-                )
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // Input Field
-                OutlinedTextField(
-                    value = inputCode,
-                    onValueChange = { inputCode = it.uppercase().take(6) },
-                    placeholder = {
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column {
                         Text(
-                            "e.g. 842-192",
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                color = Slate600,
-                                fontFamily = FontFamily.Monospace
+                            text = "Connecting via WebRTC...",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
                             )
                         )
-                    },
-                    textStyle = MaterialTheme.typography.titleLarge.copy(
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 4.sp,
-                        textAlign = TextAlign.Center
-                    ),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Characters,
-                        imeAction = ImeAction.Done
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = {
-                            focusManager.clearFocus()
-                            if (inputCode.length == 6) onConnect(inputCode)
-                        }
-                    ),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = DarkBackground,
-                        unfocusedContainerColor = DarkBackground,
-                        focusedBorderColor = Cyan400,
-                        unfocusedBorderColor = Slate800
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("client_room_code_input")
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Paste from clipboard button
-                val clipboardManager = LocalClipboardManager.current
-                Button(
-                    onClick = {
-                        val text = clipboardManager.getText()?.text?.trim()?.uppercase()
-                        if (text != null && text.length == 6) {
-                            inputCode = text
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Slate800),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ContentPaste,
-                        contentDescription = null,
-                        tint = Cyan400,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Paste Code from Clipboard", color = Slate100, style = MaterialTheme.typography.labelMedium)
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Connect Action Button
-                Button(
-                    onClick = {
-                        focusManager.clearFocus()
-                        onConnect(inputCode.trim())
-                    },
-                    enabled = inputCode.trim().length >= 4 && !isLoading,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Cyan600,
-                        disabledContainerColor = Slate800
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .testTag("client_connect_button")
-                ) {
-                    if (isLoading) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text("Connecting via WebRTC P2P...")
-                    } else {
                         Text(
-                            text = "Connect & Browse Vault",
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                            text = statusMessage,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = Slate100.copy(alpha = 0.7f),
+                                fontSize = 11.5.sp
+                            )
                         )
                     }
                 }
+            }
+        }
 
-                Spacer(modifier = Modifier.height(14.dp))
+        // Device List or Empty State
+        if (onlineHosts.isNotEmpty()) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(onlineHosts, key = { it.id }) { host ->
+                    DiscoveredDeviceCard(
+                        host = host,
+                        isConnecting = isConnecting,
+                        onConnect = { onSelectDevice(host) }
+                    )
+                }
+            }
+        } else {
+            // Empty Scanning State
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
+                    border = BorderStroke(1.dp, Slate800),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(Indigo500.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Sensors,
+                                contentDescription = null,
+                                tint = Cyan400,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Text(
+                            text = "Searching for Online Hosts...",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = "Open Host mode on your secondary phone. It will broadcast and appear in this list automatically.",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = Slate600,
+                                textAlign = TextAlign.Center,
+                                lineHeight = 18.sp
+                            )
+                        )
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        Button(
+                            onClick = onRefresh,
+                            colors = ButtonDefaults.buttonColors(containerColor = Cyan600),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("scan_again_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Scan Again")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiscoveredDeviceCard(
+    host: com.example.model.HostDevice,
+    isConnecting: Boolean,
+    onConnect: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
+        border = BorderStroke(1.dp, Cyan400.copy(alpha = 0.35f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(enabled = !isConnecting, onClick = onConnect)
+            .testTag("device_card_${host.id}")
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            // Device Icon Badge
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(Cyan400.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PhoneAndroid,
+                    contentDescription = null,
+                    tint = Cyan400,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            // Device Info
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(Emerald500)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = host.name,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                val statsText = if (host.mediaCount > 0) {
+                    "${host.mediaCount} files • ${host.photosCount} photos, ${host.videosCount} videos, ${host.audioCount} audio"
+                } else {
+                    "Ready to stream media vault"
+                }
 
                 Text(
-                    text = statusMessage,
+                    text = statsText,
                     style = MaterialTheme.typography.bodySmall.copy(
-                        color = if (status == ConnectionStatus.ERROR) Color(0xFFF43F5E) else Slate600,
-                        fontSize = 12.sp,
-                        textAlign = TextAlign.Center
-                    )
+                        color = Slate600,
+                        fontSize = 11.5.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Connect Button
+            Button(
+                onClick = onConnect,
+                enabled = !isConnecting,
+                colors = ButtonDefaults.buttonColors(containerColor = Cyan600),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                modifier = Modifier.testTag("connect_device_btn_${host.id}")
+            ) {
+                Text(
+                    text = "Connect",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }

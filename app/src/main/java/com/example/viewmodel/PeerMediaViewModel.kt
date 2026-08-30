@@ -13,6 +13,7 @@ import com.example.model.BrowserViewMode
 import com.example.model.ConnectionStatus
 import com.example.model.DirectoryGroup
 import com.example.model.FolderEntry
+import com.example.model.HostDevice
 import com.example.model.MediaFilter
 import com.example.model.MediaItem
 import com.example.model.ProtocolMessage
@@ -58,6 +59,25 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _roomCode = MutableStateFlow("")
     val roomCode: StateFlow<String> = _roomCode.asStateFlow()
+
+    private val _onlineHosts = MutableStateFlow<List<HostDevice>>(emptyList())
+    val onlineHosts: StateFlow<List<HostDevice>> = _onlineHosts.asStateFlow()
+
+    private val _isSearchingHosts = MutableStateFlow(false)
+    val isSearchingHosts: StateFlow<Boolean> = _isSearchingHosts.asStateFlow()
+
+    private fun getLocalDeviceName(): String {
+        val manufacturer = android.os.Build.MANUFACTURER.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+        val model = android.os.Build.MODEL
+        return if (model.startsWith(manufacturer, ignoreCase = true)) {
+            model
+        } else {
+            "$manufacturer $model"
+        }
+    }
+
+    private val _myHostDeviceName = MutableStateFlow(getLocalDeviceName())
+    val myHostDeviceName: StateFlow<String> = _myHostDeviceName.asStateFlow()
 
     // Host or Client media list
     private val _rawMediaItems = MutableStateFlow<List<MediaItem>>(emptyList())
@@ -277,6 +297,8 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
         _appRole.value = role
         if (role == AppRole.HOST) {
             startHosting()
+        } else if (role == AppRole.CLIENT) {
+            startHostDiscovery()
         }
     }
 
@@ -284,6 +306,7 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
         disconnect()
         _appRole.value = AppRole.NONE
         _rawMediaItems.value = emptyList()
+        _onlineHosts.value = emptyList()
         _transferMap.value = emptyMap()
         _selectedItemIds.value = emptySet()
         _selectedDirectory.value = null
@@ -349,13 +372,29 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    // --- Host Discovery (Client Side) ---
+
+    fun startHostDiscovery() {
+        _isSearchingHosts.value = true
+        _statusMessage.value = "Scanning for online devices..."
+        signalingManager.listenForOnlineHosts { hosts ->
+            _onlineHosts.value = hosts
+            _isSearchingHosts.value = false
+        }
+    }
+
+    fun connectToHost(host: HostDevice) {
+        _remoteDeviceName.value = host.name
+        joinRoomAsClient(host.id)
+    }
+
     // --- Host Logic ---
 
     fun startHosting() {
         viewModelScope.launch {
             _connectionStatus.value = ConnectionStatus.CONNECTING_FIREBASE
-            _statusMessage.value = "Indexing local media..."
-            addLog("Scanning local photos and videos...")
+            _statusMessage.value = "Indexing local media vault..."
+            addLog("Scanning local media vault...")
 
             // 1. Scan local media (and generate demo media if device is completely empty)
             var localMedia = scanner.queryAllMedia()
@@ -367,23 +406,35 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
             _rawMediaItems.value = localMedia
             hostLocalMediaMap.clear()
             localMedia.forEach { hostLocalMediaMap[it.id] = it }
-            addLog("Found ${localMedia.size} media files ready to share", isSuccess = true)
 
-            // 2. Generate Room Code
-            val code = signalingManager.generateRoomCode()
-            _roomCode.value = code
-            _statusMessage.value = "Creating room $code..."
+            val photosCount = localMedia.count { !it.isVideo && !it.isAudio }
+            val videosCount = localMedia.count { it.isVideo }
+            val audioCount = localMedia.count { it.isAudio }
+            addLog("Found ${localMedia.size} files ($photosCount photos, $videosCount videos, $audioCount audio)", isSuccess = true)
 
-            // 3. Register room in Firebase
-            signalingManager.hostRoom(
-                roomId = code,
+            // 2. Generate Host ID
+            val hostId = signalingManager.generateHostId()
+            val devName = getLocalDeviceName()
+            _myHostDeviceName.value = devName
+            _roomCode.value = hostId
+            _statusMessage.value = "Broadcasting as $devName..."
+
+            // 3. Register host & broadcast info in Firebase
+            signalingManager.hostRoomWithDeviceInfo(
+                roomId = hostId,
+                deviceName = devName,
+                deviceModel = android.os.Build.MODEL,
+                mediaCount = localMedia.size,
+                photosCount = photosCount,
+                videosCount = videosCount,
+                audioCount = audioCount,
                 onSuccess = {
                     _connectionStatus.value = ConnectionStatus.WAITING_FOR_PEER
-                    _statusMessage.value = "Waiting for primary device to connect..."
-                    addLog("Room $code active. Waiting for peer...")
+                    _statusMessage.value = "Device is online & broadcasting. Waiting for client..."
+                    addLog("Broadcasting online as '$devName'. Ready for client to connect...", isSuccess = true)
 
                     // 4. Initialize WebRTC as Host
-                    setupWebRtcHost(code)
+                    setupWebRtcHost(hostId)
                 },
                 onError = { err ->
                     _connectionStatus.value = ConnectionStatus.ERROR
@@ -401,13 +452,13 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
         webrtcManager.createOffer(
             onSuccess = { offerDesc ->
                 signalingManager.sendOffer(code, offerDesc.description)
-                addLog("Generated WebRTC Offer. Listening for Answer...")
+                addLog("Generated WebRTC Offer. Listening for incoming connections...")
 
                 // Listen for client's SDP Answer and ICE candidates
                 signalingManager.listenForClientAnswer(
                     roomId = code,
                     onAnswerReceived = { answerSdp ->
-                        addLog("Received Answer from Client. Establishing P2P link...")
+                        addLog("Client connected! Establishing direct P2P link...")
                         webrtcManager.handleRemoteAnswer(answerSdp) { err ->
                             addLog("Error handling remote answer: $err", isError = true)
                         }
@@ -428,23 +479,23 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
     // --- Client Logic ---
 
     fun joinRoomAsClient(code: String) {
-        val cleanCode = code.trim().uppercase()
-        if (cleanCode.length < 4) {
-            _statusMessage.value = "Please enter a valid Room Code"
+        val cleanCode = code.trim()
+        if (cleanCode.isEmpty()) {
+            _statusMessage.value = "Invalid device ID"
             return
         }
 
         _roomCode.value = cleanCode
         _connectionStatus.value = ConnectionStatus.CONNECTING_FIREBASE
-        _statusMessage.value = "Connecting to room $cleanCode..."
-        addLog("Connecting to secondary device room $cleanCode...")
+        _statusMessage.value = "Connecting to device..."
+        addLog("Connecting directly to host device...")
 
         webrtcManager.createPeerConnection(isHost = false)
 
         signalingManager.joinRoom(
             roomId = cleanCode,
             onOfferReceived = { offerSdp ->
-                addLog("Received Offer from Host. Creating Answer...")
+                addLog("Received handshake from Host. Establishing P2P link...")
                 _connectionStatus.value = ConnectionStatus.CONNECTING_WEBRTC
                 _statusMessage.value = "Exchanging WebRTC handshake..."
 
@@ -452,7 +503,7 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
                     offerSdp = offerSdp,
                     onAnswerCreated = { answerDesc ->
                         signalingManager.sendAnswer(cleanCode, answerDesc.description)
-                        addLog("Sent Answer. Awaiting P2P Data Channel...")
+                        addLog("Handshake sent. Awaiting P2P Data Channel...")
                     },
                     onError = { err ->
                         _connectionStatus.value = ConnectionStatus.ERROR
@@ -467,7 +518,7 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
             onError = { err ->
                 _connectionStatus.value = ConnectionStatus.ERROR
                 _statusMessage.value = err
-                addLog("Join Room Error: $err", isError = true)
+                addLog("Connection Error: $err", isError = true)
             }
         )
     }
@@ -929,6 +980,7 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun disconnect() {
+        signalingManager.stopListeningForOnlineHosts()
         signalingManager.cleanup()
         webrtcManager.close()
         _connectionStatus.value = ConnectionStatus.DISCONNECTED

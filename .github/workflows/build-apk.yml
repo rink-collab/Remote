@@ -36,7 +36,7 @@ jobs:
             -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Build APK
-        run: gradle assembleDebug
+        run: gradle assembleRelease
 
       - name: Find APK
         run: find . -type f -name "*.apk"

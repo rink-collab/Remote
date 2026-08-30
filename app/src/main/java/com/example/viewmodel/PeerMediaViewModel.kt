@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.model.ActivityLog
 import com.example.model.AppRole
+import com.example.model.BinaryChunkProtocol
 import com.example.model.BreadcrumbItem
 import com.example.model.BrowserViewMode
 import com.example.model.ConnectionStatus
@@ -581,6 +582,29 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    override fun onBinaryReceived(bytes: ByteArray) {
+        val parsed = BinaryChunkProtocol.parseChunkPacket(bytes) ?: return
+        handleBinaryDownloadChunk(parsed)
+    }
+
+    private fun handleBinaryDownloadChunk(chunk: BinaryChunkProtocol.ParsedChunk) {
+        val progressPair = saver.appendBinaryChunk(
+            fileId = chunk.fileId,
+            chunkIndex = chunk.chunkIndex,
+            totalChunks = chunk.totalChunks,
+            chunkData = chunk.payload
+        )
+        if (progressPair != null) {
+            val (receivedBytes, _) = progressPair
+            val current = _transferMap.value[chunk.fileId]
+            if (current != null) {
+                updateTransfer(
+                    current.copy(bytesTransferred = receivedBytes)
+                )
+            }
+        }
+    }
+
     override fun onMessageReceived(message: String) {
         val proto = ProtocolMessage.fromJson(message) ?: return
 
@@ -801,19 +825,25 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
                 var bytesRead: Int
                 var totalBytesSent = 0L
                 val startTime = System.currentTimeMillis()
+                val highWatermark = 512 * 1024L // 512 KB threshold for backpressure
 
                 while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                    val chunkData = if (bytesRead == chunkSize) buffer else buffer.copyOf(bytesRead)
-                    val base64 = Base64.encodeToString(chunkData, Base64.NO_WRAP)
+                    // Backpressure: pause if DataChannel queued buffer exceeds high-water mark (512 KB)
+                    while (webrtcManager.getBufferedAmount() > highWatermark) {
+                        delay(2)
+                    }
 
-                    val chunkMsg = ProtocolMessage.DownloadChunk(
-                        id = item.id,
+                    // Send raw binary packet without Base64 or JSON overhead
+                    val packet = BinaryChunkProtocol.createChunkPacket(
+                        fileId = item.id,
                         chunkIndex = chunkIndex,
                         totalChunks = totalChunks,
-                        data = base64
+                        payload = buffer,
+                        payloadOffset = 0,
+                        payloadLength = bytesRead
                     )
 
-                    webrtcManager.sendMessage(chunkMsg.toJson())
+                    webrtcManager.sendBinary(packet)
 
                     totalBytesSent += bytesRead
                     chunkIndex++
@@ -831,11 +861,13 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
                             speedKbps = speedKbps
                         )
                     )
-
-                    // Small pause to prevent buffer clogging
-                    delay(5)
                 }
                 inputStream.close()
+
+                // Wait for any remaining buffer to drain before sending completion
+                while (webrtcManager.getBufferedAmount() > 0L) {
+                    delay(2)
+                }
 
                 // Send Complete
                 webrtcManager.sendMessage(ProtocolMessage.DownloadComplete(item.id).toJson())

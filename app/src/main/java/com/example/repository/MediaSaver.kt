@@ -8,26 +8,68 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Base64
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 
 class MediaSaver(private val context: Context) {
 
+    private val TAG = "MediaSaver"
     private val activeDownloads = ConcurrentHashMap<String, DownloadSession>()
 
-    data class DownloadSession(
+    class DownloadSession(
         val fileId: String,
         val fileName: String,
         val mimeType: String,
         val totalSize: Long,
         val totalChunks: Int,
-        val tempFile: File,
-        var receivedChunks: Int = 0,
-        val chunksMap: MutableMap<Int, ByteArray> = mutableMapOf()
-    )
+        val tempFile: File
+    ) {
+        private var outputStream: BufferedOutputStream? = null
+        var bytesReceived: Long = 0L
+        var receivedChunks: Int = 0
+        var isClosed: Boolean = false
+
+        init {
+            try {
+                outputStream = BufferedOutputStream(FileOutputStream(tempFile), 64 * 1024)
+            } catch (e: Exception) {
+                Log.e("DownloadSession", "Failed to initialize temp file output stream", e)
+            }
+        }
+
+        @Synchronized
+        fun writeChunkData(data: ByteArray): Long {
+            if (isClosed) return bytesReceived
+            try {
+                outputStream?.write(data)
+                bytesReceived += data.size
+                receivedChunks++
+            } catch (e: Exception) {
+                Log.e("DownloadSession", "Error writing chunk to disk for $fileId", e)
+            }
+            return bytesReceived
+        }
+
+        @Synchronized
+        fun close() {
+            if (!isClosed) {
+                isClosed = true
+                try {
+                    outputStream?.flush()
+                    outputStream?.close()
+                } catch (e: Exception) {
+                    Log.e("DownloadSession", "Error closing download output stream for $fileId", e)
+                } finally {
+                    outputStream = null
+                }
+            }
+        }
+    }
 
     fun startDownload(
         fileId: String,
@@ -36,6 +78,11 @@ class MediaSaver(private val context: Context) {
         totalSize: Long,
         totalChunks: Int
     ) {
+        // Clean up any stale session with the same file ID
+        val old = activeDownloads.remove(fileId)
+        old?.close()
+        old?.tempFile?.delete()
+
         val tempFile = File(context.cacheDir, "dl_$fileId.tmp")
         if (tempFile.exists()) tempFile.delete()
 
@@ -49,6 +96,24 @@ class MediaSaver(private val context: Context) {
         )
     }
 
+    /**
+     * Efficiently appends raw binary chunk bytes directly to disk without memory accumulation.
+     * Returns Pair(bytesReceivedSoFar, totalSize).
+     */
+    fun appendBinaryChunk(
+        fileId: String,
+        chunkIndex: Int,
+        totalChunks: Int,
+        chunkData: ByteArray
+    ): Pair<Long, Long>? {
+        val session = activeDownloads[fileId] ?: return null
+        val bytes = session.writeChunkData(chunkData)
+        return Pair(bytes, session.totalSize)
+    }
+
+    /**
+     * Legacy Base64 append method, also writing directly to disk stream.
+     */
     suspend fun appendChunk(
         fileId: String,
         chunkIndex: Int,
@@ -56,30 +121,21 @@ class MediaSaver(private val context: Context) {
     ): Pair<Int, Int>? = withContext(Dispatchers.IO) {
         val session = activeDownloads[fileId] ?: return@withContext null
         val bytes = Base64.decode(base64Data, Base64.DEFAULT)
-
-        synchronized(session) {
-            session.chunksMap[chunkIndex] = bytes
-            session.receivedChunks++
-            Pair(session.receivedChunks, session.totalChunks)
-        }
+        session.writeChunkData(bytes)
+        Pair(session.receivedChunks, session.totalChunks)
     }
 
     suspend fun finalizeDownload(fileId: String): Uri? = withContext(Dispatchers.IO) {
         val session = activeDownloads.remove(fileId) ?: return@withContext null
+        session.close()
 
         try {
-            // Write all chunks in order to temp file
-            FileOutputStream(session.tempFile).use { fos ->
-                for (i in 0 until session.totalChunks) {
-                    val chunk = session.chunksMap[i]
-                    if (chunk != null) {
-                        fos.write(chunk)
-                    }
-                }
-                fos.flush()
+            if (!session.tempFile.exists() || session.tempFile.length() == 0L) {
+                Log.e(TAG, "Temp file is empty or missing: ${session.tempFile.absolutePath}")
+                return@withContext null
             }
 
-            // Save to Public MediaStore / Downloads directory
+            // Save from temp file directly to Public MediaStore / Downloads directory
             val savedUri = saveToPublicStorage(
                 tempFile = session.tempFile,
                 fileName = session.fileName,
@@ -89,7 +145,8 @@ class MediaSaver(private val context: Context) {
             session.tempFile.delete()
             savedUri
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error finalizing download for $fileId", e)
+            session.tempFile.delete()
             null
         }
     }
@@ -156,6 +213,7 @@ class MediaSaver(private val context: Context) {
 
     fun cancelDownload(fileId: String) {
         val session = activeDownloads.remove(fileId)
+        session?.close()
         session?.tempFile?.delete()
     }
 }

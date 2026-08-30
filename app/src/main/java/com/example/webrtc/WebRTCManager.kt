@@ -2,6 +2,7 @@ package com.example.webrtc
 
 import android.content.Context
 import android.util.Log
+import com.example.model.BinaryChunkProtocol
 import com.example.signaling.IceCandidateData
 import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
@@ -20,6 +21,7 @@ interface WebRTCListener {
     fun onConnectionStateChanged(state: PeerConnectionState)
     fun onDataChannelStateChanged(isOpen: Boolean)
     fun onMessageReceived(message: String)
+    fun onBinaryReceived(bytes: ByteArray)
 }
 
 class WebRTCManager(
@@ -155,9 +157,12 @@ class WebRTCManager(
                     val data = buffer.data
                     val bytes = ByteArray(data.remaining())
                     data.get(bytes)
-                    val message = String(bytes, StandardCharsets.UTF_8)
-                    Log.d(TAG, "DataChannel received message length: ${message.length}")
-                    listener.onMessageReceived(message)
+                    if (buffer.binary || (bytes.isNotEmpty() && bytes[0] == BinaryChunkProtocol.MAGIC_BYTE)) {
+                        listener.onBinaryReceived(bytes)
+                    } else {
+                        val message = String(bytes, StandardCharsets.UTF_8)
+                        listener.onMessageReceived(message)
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing incoming data channel buffer", e)
                 }
@@ -280,6 +285,23 @@ class WebRTCManager(
             Log.e(TAG, "Error sending data channel message", e)
             false
         }
+    }
+
+    fun sendBinary(bytes: ByteArray): Boolean {
+        val dc = dataChannel ?: return false
+        if (dc.state() != DataChannel.State.OPEN) return false
+
+        return try {
+            val buffer = DataChannel.Buffer(ByteBuffer.wrap(bytes), true)
+            dc.send(buffer)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending binary buffer", e)
+            false
+        }
+    }
+
+    fun getBufferedAmount(): Long {
+        return dataChannel?.bufferedAmount() ?: 0L
     }
 
     fun isDataChannelOpen(): Boolean {

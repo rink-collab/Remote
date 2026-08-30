@@ -6,7 +6,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
 class ProtocolMessageTest {
 
     @Test
@@ -75,5 +80,24 @@ class ProtocolMessageTest {
         val thumb = parsed as ProtocolMessage.ThumbnailResponse
         assertEquals("thumb_1", thumb.id)
         assertEquals("base64ThumbnailData", thumb.base64Data)
+    }
+
+    @Test
+    fun testBinaryChunkProtocolSerialization() {
+        val testPayload = "Raw WebRTC Binary Chunk Payload 1234567890".toByteArray(Charsets.UTF_8)
+        val packet = com.example.model.BinaryChunkProtocol.createChunkPacket(
+            fileId = "media_item_999",
+            chunkIndex = 5,
+            totalChunks = 50,
+            payload = testPayload
+        )
+
+        val parsed = com.example.model.BinaryChunkProtocol.parseChunkPacket(packet)
+        assertNotNull(parsed)
+        assertEquals("media_item_999", parsed?.fileId)
+        assertEquals(5, parsed?.chunkIndex)
+        assertEquals(50, parsed?.totalChunks)
+        assertEquals(testPayload.size, parsed?.payload?.size)
+        assertEquals("Raw WebRTC Binary Chunk Payload 1234567890", String(parsed!!.payload, Charsets.UTF_8))
     }
 }

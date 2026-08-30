@@ -14,20 +14,18 @@ android {
     compileSdk { version = release(36) { minorApiLevel = 1 } }
 
     defaultConfig {
-        applicationId = "com.aistudio.peermedia.zrtqyk"
-        minSdk = 24
-        targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+    applicationId = "com.aistudio.peermedia.zrtqyk"
+    minSdk = 24
+    targetSdk = 36
+    versionCode = 1
+    versionName = "1.0"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
-        ndk {
-            abiFilters "arm64-v8a"
-        }
-        // ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
+    ndk {
+        abiFilters += listOf("arm64-v8a")
     }
+}
 
   signingConfigs {
     create("release") {

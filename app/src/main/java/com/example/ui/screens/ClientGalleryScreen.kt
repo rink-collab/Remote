@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
-import android.graphics.BitmapFactory
-import android.util.Base64
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -9,7 +8,6 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,7 +27,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
@@ -46,12 +43,11 @@ import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -63,11 +59,13 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -81,10 +79,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -96,7 +91,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.BreadcrumbItem
-import com.example.model.BrowserViewMode
 import com.example.model.ConnectionStatus
 import com.example.model.FolderEntry
 import com.example.model.MediaFilter
@@ -111,6 +105,7 @@ import com.example.ui.theme.DarkBackground
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceVariant
 import com.example.ui.theme.Emerald500
+import com.example.ui.theme.Rose500
 import com.example.ui.theme.Slate100
 import com.example.ui.theme.Slate600
 import com.example.ui.theme.Slate700
@@ -133,12 +128,10 @@ fun ClientGalleryScreen(
     val statusMessage by viewModel.statusMessage.collectAsState()
     val roomCode by viewModel.roomCode.collectAsState()
     val rawMediaItems by viewModel.rawMediaItems.collectAsState()
-    val filteredItems by viewModel.filteredMediaItems.collectAsState()
     val selectedFilter by viewModel.selectedFilter.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val remoteDeviceName by viewModel.remoteDeviceName.collectAsState()
     val currentFolderPath by viewModel.currentFolderPath.collectAsState()
-    val browserViewMode by viewModel.browserViewMode.collectAsState()
     val folderBreadcrumbs by viewModel.folderBreadcrumbs.collectAsState()
     val currentSubfolders by viewModel.currentSubfolders.collectAsState()
     val currentFolderFiles by viewModel.currentFolderFiles.collectAsState()
@@ -148,11 +141,28 @@ fun ClientGalleryScreen(
     val isSelectionMode by viewModel.isSelectionMode.collectAsState()
 
     val isConnected = connectionStatus == ConnectionStatus.CONNECTED
+    var showExitConfirmDialog by remember { mutableStateOf(false) }
 
-    // Handle back button: if inside folder hierarchy, step up; otherwise onBack()
-    val handleNavigationBack: () -> Unit = {
-        if (currentFolderPath.isNotEmpty()) {
+    // Intercept hardware and software Back presses
+    BackHandler(enabled = true) {
+        if (isSelectionMode) {
+            viewModel.clearSelection()
+        } else if (currentFolderPath.isNotEmpty()) {
             viewModel.navigateUp()
+        } else if (isConnected) {
+            showExitConfirmDialog = true
+        } else {
+            onBack()
+        }
+    }
+
+    val handleTopBarBack: () -> Unit = {
+        if (isSelectionMode) {
+            viewModel.clearSelection()
+        } else if (currentFolderPath.isNotEmpty()) {
+            viewModel.navigateUp()
+        } else if (isConnected) {
+            showExitConfirmDialog = true
         } else {
             onBack()
         }
@@ -227,7 +237,7 @@ fun ClientGalleryScreen(
                         }
                     },
                     navigationIcon = {
-                        IconButton(onClick = handleNavigationBack) {
+                        IconButton(onClick = handleTopBarBack) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = if (currentFolderPath.isNotEmpty()) "Up" else "Back",
@@ -237,29 +247,6 @@ fun ClientGalleryScreen(
                     },
                     actions = {
                         if (isConnected) {
-                            // View Mode Toggle (Hierarchy vs Flat Gallery)
-                            IconButton(
-                                onClick = {
-                                    val nextMode = if (browserViewMode == BrowserViewMode.HIERARCHY) {
-                                        BrowserViewMode.FLAT_GALLERY
-                                    } else {
-                                        BrowserViewMode.HIERARCHY
-                                    }
-                                    viewModel.setBrowserViewMode(nextMode)
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = if (browserViewMode == BrowserViewMode.HIERARCHY) {
-                                        Icons.Default.GridView
-                                    } else {
-                                        Icons.Default.Folder
-                                    },
-                                    contentDescription = "Toggle View Mode",
-                                    tint = Cyan400,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-
                             // Refresh Catalog
                             IconButton(onClick = { viewModel.refreshMediaCatalog() }) {
                                 Icon(
@@ -342,7 +329,7 @@ fun ClientGalleryScreen(
                     onConnect = { code -> viewModel.joinRoomAsClient(code) }
                 )
             } else {
-                // Connected Hierarchy Grid or Flat Gallery
+                // Connected Pure Folder Hierarchy Browser
                 Column(modifier = Modifier.fillMaxSize()) {
                     // Search & Type Filter Bar
                     SearchAndFilterBar(
@@ -352,147 +339,82 @@ fun ClientGalleryScreen(
                         onFilterSelect = { viewModel.setFilter(it) }
                     )
 
-                    if (browserViewMode == BrowserViewMode.HIERARCHY) {
-                        // Breadcrumbs Path Hierarchy Bar
-                        BreadcrumbsPathBar(
-                            breadcrumbs = folderBreadcrumbs,
-                            currentPath = currentFolderPath,
-                            onBreadcrumbClick = { viewModel.navigateToBreadcrumb(it) },
-                            onNavigateUp = { viewModel.navigateUp() }
-                        )
+                    // Breadcrumbs Path Hierarchy Bar
+                    BreadcrumbsPathBar(
+                        breadcrumbs = folderBreadcrumbs,
+                        currentPath = currentFolderPath,
+                        onBreadcrumbClick = { viewModel.navigateToBreadcrumb(it) },
+                        onNavigateUp = { viewModel.navigateUp() }
+                    )
 
-                        // Check if current view has folders or files
-                        val hasSubfolders = currentSubfolders.isNotEmpty()
-                        val hasFiles = currentFolderFiles.isNotEmpty()
+                    val hasSubfolders = currentSubfolders.isNotEmpty()
+                    val hasFiles = currentFolderFiles.isNotEmpty()
 
-                        if (!hasSubfolders && !hasFiles) {
-                            EmptyFolderView(
-                                currentPath = currentFolderPath,
-                                searchQuery = searchQuery,
-                                onNavigateUp = { viewModel.navigateUp() },
-                                onRefresh = { viewModel.refreshMediaCatalog() }
-                            )
-                        } else {
-                            // Unified 3-Column Hierarchy Grid
-                            LazyVerticalGrid(
-                                columns = GridCells.Fixed(3),
-                                contentPadding = PaddingValues(10.dp),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp),
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .testTag("folder_hierarchy_grid")
-                            ) {
-                                // 1. Subfolders Grid Section
-                                if (hasSubfolders) {
-                                    items(currentSubfolders, key = { "folder_${it.fullPath}" }) { folder ->
-                                        FolderGridCard(
-                                            folder = folder,
-                                            onClick = { viewModel.navigateToFolder(folder.fullPath) }
-                                        )
+                    if (hasSubfolders) {
+                        // STRICT FOLDER GRID: Show only subfolders when folders exist (No mixed media items displayed directly)
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(3),
+                            contentPadding = PaddingValues(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("folder_hierarchy_grid")
+                        ) {
+                            items(currentSubfolders, key = { "folder_${it.fullPath}" }) { folder ->
+                                FolderGridCard(
+                                    folder = folder,
+                                    onClick = { viewModel.navigateToFolder(folder.fullPath) }
+                                )
+                            }
+                        }
+                    } else if (hasFiles) {
+                        // LEAF FOLDER: When inside a folder with media items and no subfolders, display the media files grid
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(minSize = 105.dp),
+                            contentPadding = PaddingValues(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("leaf_folder_media_grid")
+                        ) {
+                            items(currentFolderFiles, key = { it.id }) { item ->
+                                LaunchedEffect(item.id) {
+                                    if (item.thumbnailBase64 == null) {
+                                        viewModel.requestThumbnail(item.id)
                                     }
                                 }
 
-                                // 2. Files Section Header (if both subfolders and files exist)
-                                if (hasSubfolders && hasFiles) {
-                                    item(span = { GridItemSpan(3) }) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(top = 10.dp, bottom = 4.dp)
-                                        ) {
-                                            Text(
-                                                text = "Media Files (${currentFolderFiles.size})",
-                                                style = MaterialTheme.typography.titleSmall.copy(
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = Cyan400
-                                                )
-                                            )
+                                val isSelected = selectedItemIds.contains(item.id)
+                                val itemTransfer = transferMap[item.id]
+
+                                GalleryGridItem(
+                                    item = item,
+                                    isSelected = isSelected,
+                                    isSelectionMode = isSelectionMode,
+                                    transferProgress = itemTransfer,
+                                    onClick = {
+                                        if (isSelectionMode) {
+                                            viewModel.toggleItemSelection(item.id)
+                                        } else {
+                                            viewModel.setDetailItem(item)
                                         }
+                                    },
+                                    onLongClick = {
+                                        viewModel.toggleItemSelection(item.id)
                                     }
-                                }
-
-                                // 3. Media Items Grid Section
-                                if (hasFiles) {
-                                    items(currentFolderFiles, key = { it.id }) { item ->
-                                        LaunchedEffect(item.id) {
-                                            if (item.thumbnailBase64 == null) {
-                                                viewModel.requestThumbnail(item.id)
-                                            }
-                                        }
-
-                                        val isSelected = selectedItemIds.contains(item.id)
-                                        val itemTransfer = transferMap[item.id]
-
-                                        GalleryGridItem(
-                                            item = item,
-                                            isSelected = isSelected,
-                                            isSelectionMode = isSelectionMode,
-                                            transferProgress = itemTransfer,
-                                            onClick = {
-                                                if (isSelectionMode) {
-                                                    viewModel.toggleItemSelection(item.id)
-                                                } else {
-                                                    viewModel.setDetailItem(item)
-                                                }
-                                            },
-                                            onLongClick = {
-                                                viewModel.toggleItemSelection(item.id)
-                                            }
-                                        )
-                                    }
-                                }
+                                )
                             }
                         }
                     } else {
-                        // Flat Timeline Gallery Mode
-                        if (filteredItems.isEmpty()) {
-                            EmptyFolderView(
-                                currentPath = "",
-                                searchQuery = searchQuery,
-                                onNavigateUp = {},
-                                onRefresh = { viewModel.refreshMediaCatalog() }
-                            )
-                        } else {
-                            LazyVerticalGrid(
-                                columns = GridCells.Adaptive(minSize = 105.dp),
-                                contentPadding = PaddingValues(8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .testTag("flat_gallery_grid")
-                            ) {
-                                items(filteredItems, key = { it.id }) { item ->
-                                    LaunchedEffect(item.id) {
-                                        if (item.thumbnailBase64 == null) {
-                                            viewModel.requestThumbnail(item.id)
-                                        }
-                                    }
-
-                                    val isSelected = selectedItemIds.contains(item.id)
-                                    val itemTransfer = transferMap[item.id]
-
-                                    GalleryGridItem(
-                                        item = item,
-                                        isSelected = isSelected,
-                                        isSelectionMode = isSelectionMode,
-                                        transferProgress = itemTransfer,
-                                        onClick = {
-                                            if (isSelectionMode) {
-                                                viewModel.toggleItemSelection(item.id)
-                                            } else {
-                                                viewModel.setDetailItem(item)
-                                            }
-                                        },
-                                        onLongClick = {
-                                            viewModel.toggleItemSelection(item.id)
-                                        }
-                                    )
-                                }
-                            }
-                        }
+                        // Empty Folder or No search results
+                        EmptyFolderView(
+                            currentPath = currentFolderPath,
+                            searchQuery = searchQuery,
+                            onNavigateUp = { viewModel.navigateUp() },
+                            onRefresh = { viewModel.refreshMediaCatalog() }
+                        )
                     }
                 }
             }
@@ -507,6 +429,45 @@ fun ClientGalleryScreen(
             transferProgress = transfer,
             onDismiss = { viewModel.setDetailItem(null) },
             onDownload = { viewModel.requestDownload(item) }
+        )
+    }
+
+    // Exit Confirmation Dialog
+    if (showExitConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showExitConfirmDialog = false },
+            title = {
+                Text(
+                    text = "Exit File Browser?",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                )
+            },
+            text = {
+                Text(
+                    text = "This will disconnect from \"$remoteDeviceName\" and return to the main role selection.",
+                    style = MaterialTheme.typography.bodyMedium.copy(color = Slate100)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showExitConfirmDialog = false
+                        onBack()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Rose500)
+                ) {
+                    Text("Exit & Disconnect")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitConfirmDialog = false }) {
+                    Text("Stay in Browser", color = Cyan400)
+                }
+            },
+            containerColor = DarkSurfaceVariant
         )
     }
 }
@@ -900,7 +861,7 @@ private fun EmptyFolderView(
             )
             Spacer(modifier = Modifier.height(12.dp))
             val msg = if (searchQuery.isNotEmpty()) {
-                "No files matching \"$searchQuery\""
+                "No files or folders matching \"$searchQuery\""
             } else if (currentPath.isNotEmpty()) {
                 "Folder \"${currentPath.substringAfterLast('/')}\" is empty"
             } else {
@@ -956,7 +917,6 @@ private fun ConnectRoomView(
     statusMessage: String,
     onConnect: (String) -> Unit
 ) {
-    val context = LocalContext.current
     var inputCode by remember(initialCode) { mutableStateOf(initialCode) }
     val focusManager = LocalFocusManager.current
     val isLoading = status == ConnectionStatus.CONNECTING_FIREBASE || status == ConnectionStatus.CONNECTING_WEBRTC

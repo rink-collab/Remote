@@ -96,9 +96,6 @@ fun MainAppContent(viewModel: PeerMediaViewModel) {
             )
         }
         AppRole.CLIENT -> {
-            BackHandler {
-                viewModel.resetToRoleSelection()
-            }
             ClientGalleryScreen(
                 viewModel = viewModel,
                 onBack = {

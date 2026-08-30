@@ -46,6 +46,23 @@ data class DirectoryGroup(
     val latestItem: MediaItem? = null
 )
 
+data class FolderEntry(
+    val name: String,          // e.g. "Camera", "Pictures", "DCIM"
+    val fullPath: String,      // e.g. "DCIM/Camera"
+    val fileCount: Int,        // count of media files in this subtree or directory
+    val subFolderCount: Int = 0
+)
+
+data class BreadcrumbItem(
+    val label: String,         // e.g. "Device", "DCIM", "Camera"
+    val path: String           // e.g. "", "DCIM", "DCIM/Camera"
+)
+
+enum class BrowserViewMode {
+    HIERARCHY, // Folder grid with folder navigation
+    FLAT_GALLERY // All media chronological grid
+}
+
 enum class MediaFilter(val label: String) {
     ALL("All Media"),
     PHOTOS("Photos"),

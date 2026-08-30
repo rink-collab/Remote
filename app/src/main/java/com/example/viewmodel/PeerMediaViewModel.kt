@@ -8,8 +8,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.model.ActivityLog
 import com.example.model.AppRole
+import com.example.model.BreadcrumbItem
+import com.example.model.BrowserViewMode
 import com.example.model.ConnectionStatus
 import com.example.model.DirectoryGroup
+import com.example.model.FolderEntry
 import com.example.model.MediaFilter
 import com.example.model.MediaItem
 import com.example.model.ProtocolMessage
@@ -68,6 +71,145 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    private val _remoteDeviceName = MutableStateFlow("Xiaomi Note 7")
+    val remoteDeviceName: StateFlow<String> = _remoteDeviceName.asStateFlow()
+
+    private val _currentFolderPath = MutableStateFlow("") // "" = Root / Device Storage
+    val currentFolderPath: StateFlow<String> = _currentFolderPath.asStateFlow()
+
+    private val _browserViewMode = MutableStateFlow(BrowserViewMode.HIERARCHY)
+    val browserViewMode: StateFlow<BrowserViewMode> = _browserViewMode.asStateFlow()
+
+    // Breadcrumbs list for current folder path
+    val folderBreadcrumbs: StateFlow<List<BreadcrumbItem>> = combine(
+        _currentFolderPath,
+        _remoteDeviceName
+    ) { path, devName ->
+        val rootTitle = if (devName.isNotBlank() && devName != "Remote Device") "Device - $devName" else "Internal Storage"
+        val list = mutableListOf(BreadcrumbItem(label = rootTitle, path = ""))
+        if (path.isNotEmpty()) {
+            val parts = path.split("/")
+            var accumulated = ""
+            parts.forEach { part ->
+                if (part.isNotBlank()) {
+                    accumulated = if (accumulated.isEmpty()) part else "$accumulated/$part"
+                    list.add(BreadcrumbItem(label = part, path = accumulated))
+                }
+            }
+        }
+        list
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), listOf(BreadcrumbItem("Internal Storage", "")))
+
+    // Normalize item path for folder hierarchy
+    private fun normalizeItemPath(item: MediaItem): String {
+        val rel = item.relativePath.trim().trim('/')
+        if (rel.isNotEmpty()) return rel
+        val bucket = item.bucketName.trim().trim('/')
+        if (bucket.isNotEmpty() && !bucket.equals("Internal Storage", ignoreCase = true) && !bucket.equals("Storage", ignoreCase = true)) {
+            return bucket
+        }
+        return ""
+    }
+
+    // Computed subfolders for the current folder path
+    val currentSubfolders: StateFlow<List<FolderEntry>> = combine(
+        _rawMediaItems,
+        _selectedFilter,
+        _searchQuery,
+        _currentFolderPath
+    ) { items, filter, query, curPath ->
+        val filtered = items.filter { item ->
+            when (filter) {
+                MediaFilter.ALL -> true
+                MediaFilter.PHOTOS -> !item.isVideo
+                MediaFilter.VIDEOS -> item.isVideo
+            }
+        }
+
+        if (query.isNotBlank()) {
+            // When search is active, show matching folder names
+            val matchingFolders = mutableMapOf<String, MutableList<MediaItem>>()
+            filtered.forEach { item ->
+                val path = normalizeItemPath(item)
+                if (path.isNotEmpty()) {
+                    val folderName = path.substringBefore('/')
+                    if (folderName.contains(query.trim(), ignoreCase = true)) {
+                        matchingFolders.getOrPut(folderName) { mutableListOf() }.add(item)
+                    }
+                }
+            }
+            return@combine matchingFolders.map { (name, list) ->
+                FolderEntry(name = name, fullPath = name, fileCount = list.size)
+            }.sortedBy { it.name.lowercase() }
+        }
+
+        val prefix = if (curPath.isEmpty()) "" else "$curPath/"
+        val subfolderMap = mutableMapOf<String, MutableList<MediaItem>>()
+
+        filtered.forEach { item ->
+            val path = normalizeItemPath(item)
+            if (curPath.isEmpty()) {
+                if (path.isNotEmpty()) {
+                    val firstSegment = path.substringBefore('/')
+                    subfolderMap.getOrPut(firstSegment) { mutableListOf() }.add(item)
+                }
+            } else {
+                if (path.startsWith(prefix) && path.length > prefix.length) {
+                    val remainder = path.removePrefix(prefix)
+                    val nextSegment = remainder.substringBefore('/')
+                    subfolderMap.getOrPut(nextSegment) { mutableListOf() }.add(item)
+                }
+            }
+        }
+
+        subfolderMap.map { (folderName, folderItems) ->
+            val fullSubPath = if (curPath.isEmpty()) folderName else "$curPath/$folderName"
+            FolderEntry(
+                name = folderName,
+                fullPath = fullSubPath,
+                fileCount = folderItems.size
+            )
+        }.sortedBy { it.name.lowercase() }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Computed media files for current folder path
+    val currentFolderFiles: StateFlow<List<MediaItem>> = combine(
+        _rawMediaItems,
+        _selectedFilter,
+        _searchQuery,
+        _currentFolderPath
+    ) { items, filter, query, curPath ->
+        val filtered = items.filter { item ->
+            val matchesFilter = when (filter) {
+                MediaFilter.ALL -> true
+                MediaFilter.PHOTOS -> !item.isVideo
+                MediaFilter.VIDEOS -> item.isVideo
+            }
+            matchesFilter
+        }
+
+        if (query.isNotBlank()) {
+            return@combine filtered.filter { item ->
+                item.displayName.contains(query.trim(), ignoreCase = true) ||
+                    item.bucketName.contains(query.trim(), ignoreCase = true) ||
+                    item.relativePath.contains(query.trim(), ignoreCase = true)
+            }
+        }
+
+        if (curPath.isEmpty()) {
+            // Direct files at root level (items without folder)
+            filtered.filter { normalizeItemPath(it).isEmpty() }
+        } else {
+            // Files in this specific folder or sub-leaf
+            val prefix = "$curPath/"
+            filtered.filter { item ->
+                val path = normalizeItemPath(item)
+                path.equals(curPath, ignoreCase = true) ||
+                    path.startsWith(prefix, ignoreCase = true)
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val directoryGroups: StateFlow<List<DirectoryGroup>> = _rawMediaItems.map { items ->
         items.groupBy { it.bucketName }
@@ -142,11 +284,36 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
         _transferMap.value = emptyMap()
         _selectedItemIds.value = emptySet()
         _selectedDirectory.value = null
+        _currentFolderPath.value = ""
+        _remoteDeviceName.value = "Xiaomi Note 7"
         _isSelectionMode.value = false
     }
 
     fun selectDirectory(dir: String?) {
         _selectedDirectory.value = dir
+    }
+
+    fun navigateToFolder(path: String) {
+        _currentFolderPath.value = path
+        _selectedDirectory.value = null
+    }
+
+    fun navigateUp() {
+        val cur = _currentFolderPath.value
+        if (cur.isEmpty()) return
+        if (!cur.contains('/')) {
+            _currentFolderPath.value = ""
+        } else {
+            _currentFolderPath.value = cur.substringBeforeLast('/')
+        }
+    }
+
+    fun navigateToBreadcrumb(path: String) {
+        _currentFolderPath.value = path
+    }
+
+    fun setBrowserViewMode(mode: BrowserViewMode) {
+        _browserViewMode.value = mode
     }
 
     fun refreshLocalMedia() {
@@ -368,7 +535,7 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
                 handleGetCatalogRequest()
             }
             is ProtocolMessage.CatalogResponse -> {
-                handleCatalogResponse(proto.items)
+                handleCatalogResponse(proto)
             }
             is ProtocolMessage.CatalogChunk -> {
                 handleCatalogChunk(proto)
@@ -429,10 +596,11 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             val items = _rawMediaItems.value
-            addLog("Client requested media catalog. Transmitting ${items.size} items in chunks...")
+            val hostDeviceName = "${android.os.Build.MANUFACTURER.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }} ${android.os.Build.MODEL}".trim()
+            addLog("Client requested media catalog. Transmitting ${items.size} items from $hostDeviceName in chunks...")
 
             if (items.isEmpty()) {
-                val msg = ProtocolMessage.CatalogResponse(emptyList())
+                val msg = ProtocolMessage.CatalogResponse(emptyList(), deviceName = hostDeviceName)
                 webrtcManager.sendMessage(msg.toJson())
                 return@launch
             }
@@ -448,7 +616,8 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
                     items = chunkList,
                     chunkIndex = index,
                     totalChunks = totalChunks,
-                    totalItems = totalItems
+                    totalItems = totalItems,
+                    deviceName = hostDeviceName
                 )
                 val sent = webrtcManager.sendMessage(chunkMsg.toJson())
                 if (!sent) {
@@ -461,6 +630,9 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun handleCatalogChunk(chunk: ProtocolMessage.CatalogChunk) {
+        if (chunk.deviceName.isNotBlank()) {
+            _remoteDeviceName.value = chunk.deviceName
+        }
         val current = _rawMediaItems.value.toMutableList()
         if (chunk.chunkIndex == 0) {
             current.clear()
@@ -477,9 +649,12 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun handleCatalogResponse(items: List<MediaItem>) {
-        _rawMediaItems.value = items
-        addLog("Received catalog of ${items.size} media items from secondary phone", isSuccess = true)
+    private fun handleCatalogResponse(response: ProtocolMessage.CatalogResponse) {
+        if (response.deviceName.isNotBlank()) {
+            _remoteDeviceName.value = response.deviceName
+        }
+        _rawMediaItems.value = response.items
+        addLog("Received catalog of ${response.items.size} media items from secondary phone", isSuccess = true)
     }
 
     fun requestThumbnail(itemId: String) {

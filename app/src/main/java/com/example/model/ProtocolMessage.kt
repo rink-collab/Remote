@@ -6,12 +6,13 @@ import org.json.JSONObject
 sealed class ProtocolMessage {
 
     data class GetCatalog(val offset: Int = 0, val limit: Int = 200) : ProtocolMessage()
-    data class CatalogResponse(val items: List<MediaItem>) : ProtocolMessage()
+    data class CatalogResponse(val items: List<MediaItem>, val deviceName: String = "") : ProtocolMessage()
     data class CatalogChunk(
         val items: List<MediaItem>,
         val chunkIndex: Int,
         val totalChunks: Int,
-        val totalItems: Int
+        val totalItems: Int,
+        val deviceName: String = ""
     ) : ProtocolMessage()
     data class GetThumbnail(val id: String) : ProtocolMessage()
     data class ThumbnailResponse(val id: String, val base64Data: String) : ProtocolMessage()
@@ -44,6 +45,7 @@ sealed class ProtocolMessage {
             }
             is CatalogResponse -> {
                 json.put("type", "CATALOG_RESP")
+                json.put("deviceName", deviceName)
                 val array = JSONArray()
                 items.forEach { item ->
                     val obj = JSONObject()
@@ -65,6 +67,7 @@ sealed class ProtocolMessage {
                 json.put("chunkIndex", chunkIndex)
                 json.put("totalChunks", totalChunks)
                 json.put("totalItems", totalItems)
+                json.put("deviceName", deviceName)
                 val array = JSONArray()
                 items.forEach { item ->
                     val obj = JSONObject()
@@ -151,7 +154,10 @@ sealed class ProtocolMessage {
                                 )
                             )
                         }
-                        CatalogResponse(list)
+                        CatalogResponse(
+                            items = list,
+                            deviceName = json.optString("deviceName", "")
+                        )
                     }
                     "CATALOG_CHUNK" -> {
                         val array = json.optJSONArray("items") ?: JSONArray()
@@ -176,7 +182,8 @@ sealed class ProtocolMessage {
                             items = list,
                             chunkIndex = json.optInt("chunkIndex", 0),
                             totalChunks = json.optInt("totalChunks", 1),
-                            totalItems = json.optInt("totalItems", list.size)
+                            totalItems = json.optInt("totalItems", list.size),
+                            deviceName = json.optString("deviceName", "")
                         )
                     }
                     "GET_THUMBNAIL" -> GetThumbnail(json.getString("id"))

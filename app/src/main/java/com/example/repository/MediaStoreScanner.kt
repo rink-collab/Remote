@@ -221,14 +221,18 @@ class MediaStoreScanner(private val context: Context) {
             if (!vaultDir.exists()) vaultDir.mkdirs()
 
             val samples = listOf(
-                SampleSpec("Sunset_Beach.jpg", "DCIM/Camera", "Camera", 0xFFE11D48.toInt(), 0xFFFB923C.toInt(), "Sunset Beach Resort"),
-                SampleSpec("Mountain_Hike.jpg", "Pictures/Vacation", "Vacation", 0xFF0D9488.toInt(), 0xFF2DD4BF.toInt(), "Alpine Ridge Trail"),
-                SampleSpec("Family_Dinner.jpg", "Pictures/Events", "Events", 0xFF4F46E5.toInt(), 0xFF818CF8.toInt(), "Family Gathering 2026"),
-                SampleSpec("Architectural_Blueprint.jpg", "Downloads", "Downloads", 0xFF1E293B.toInt(), 0xFF475569.toInt(), "Studio Project Floorplan"),
-                SampleSpec("Roadtrip_Panorama.jpg", "DCIM/Camera", "Camera", 0xFFD97706.toInt(), 0xFFFBBF24.toInt(), "Highway 101 Coastline"),
-                SampleSpec("Product_Design_3D.jpg", "Pictures/Screenshots", "Screenshots", 0xFF0284C7.toInt(), 0xFF38BDF8.toInt(), "CAD Render Concept"),
-                SampleSpec("Urban_City_Lights.jpg", "Pictures/Wallpapers", "Wallpapers", 0xFF581C87.toInt(), 0xFFA855F7.toInt(), "Downtown Skyline Night"),
-                SampleSpec("Document_Scan_Tax.jpg", "Downloads/Docs", "Downloads", 0xFF334155.toInt(), 0xFF64748B.toInt(), "Invoice Receipt #8492")
+                SampleSpec("IMG_20260829_140231.jpg", "DCIM/Camera", "Camera", 0xFFE11D48.toInt(), 0xFFFB923C.toInt(), "Sunset Beach Resort"),
+                SampleSpec("IMG_20260829_152204.jpg", "DCIM/Camera", "Camera", 0xFFD97706.toInt(), 0xFFFBBF24.toInt(), "Highway 101 Coastline"),
+                SampleSpec("PANO_20260829_163012.jpg", "DCIM/Panoramas", "Panoramas", 0xFF059669.toInt(), 0xFF34D399.toInt(), "Mountain Peak 360"),
+                SampleSpec("Screenshot_20260829_091522.jpg", "Pictures/Screenshots", "Screenshots", 0xFF0284C7.toInt(), 0xFF38BDF8.toInt(), "CAD Render Concept"),
+                SampleSpec("Vacation_Alps_Hike.jpg", "Pictures/Vacation", "Vacation", 0xFF0D9488.toInt(), 0xFF2DD4BF.toInt(), "Alpine Ridge Trail"),
+                SampleSpec("Family_Dinner_2026.jpg", "Pictures/Events", "Events", 0xFF4F46E5.toInt(), 0xFF818CF8.toInt(), "Family Gathering 2026"),
+                SampleSpec("Cyberpunk_Neon_Skyline.jpg", "Pictures/Wallpapers", "Wallpapers", 0xFF581C87.toInt(), 0xFFA855F7.toInt(), "Downtown Skyline Night"),
+                SampleSpec("Project_Report_Q3.jpg", "Download", "Download", 0xFF1E293B.toInt(), 0xFF475569.toInt(), "Studio Project Floorplan"),
+                SampleSpec("Tax_Invoice_8492.jpg", "Download/Invoices", "Invoices", 0xFF334155.toInt(), 0xFF64748B.toInt(), "Invoice Receipt #8492"),
+                SampleSpec("Drone_Flyover_Teaser.jpg", "Movies/Drone", "Drone", 0xFFBE123C.toInt(), 0xFFFB7185.toInt(), "4K Drone Reel Trailer"),
+                SampleSpec("App_Cache_Manifest.jpg", ".android/data", ".android", 0xFF374151.toInt(), 0xFF6B7280.toInt(), "App Manifest Backup"),
+                SampleSpec("Beta_Telemetry_State.jpg", ".BetaDataStorage", ".BetaDataStorage", 0xFF1F2937.toInt(), 0xFF4B5563.toInt(), "Telemetry Diagnostic")
             )
 
             samples.forEach { spec ->

@@ -122,8 +122,9 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
         val filtered = items.filter { item ->
             when (filter) {
                 MediaFilter.ALL -> true
-                MediaFilter.PHOTOS -> !item.isVideo
+                MediaFilter.PHOTOS -> !item.isVideo && !item.isAudio
                 MediaFilter.VIDEOS -> item.isVideo
+                MediaFilter.AUDIO -> item.isAudio
             }
         }
 
@@ -183,8 +184,9 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
         val filtered = items.filter { item ->
             val matchesFilter = when (filter) {
                 MediaFilter.ALL -> true
-                MediaFilter.PHOTOS -> !item.isVideo
+                MediaFilter.PHOTOS -> !item.isVideo && !item.isAudio
                 MediaFilter.VIDEOS -> item.isVideo
+                MediaFilter.AUDIO -> item.isAudio
             }
             matchesFilter
         }
@@ -232,8 +234,9 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
         items.filter { item ->
             val matchesFilter = when (filter) {
                 MediaFilter.ALL -> true
-                MediaFilter.PHOTOS -> !item.isVideo
+                MediaFilter.PHOTOS -> !item.isVideo && !item.isAudio
                 MediaFilter.VIDEOS -> item.isVideo
+                MediaFilter.AUDIO -> item.isAudio
             }
             val matchesDir = if (selectedDir == null) true else {
                 item.bucketName.equals(selectedDir, ignoreCase = true)

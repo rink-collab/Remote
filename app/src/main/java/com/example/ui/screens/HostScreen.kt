@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
@@ -95,8 +96,9 @@ fun HostScreen(
     val transferMap by viewModel.transferMap.collectAsState()
     val activityLogs by viewModel.activityLogs.collectAsState()
 
-    val photosCount = rawMediaItems.count { !it.isVideo }
+    val photosCount = rawMediaItems.count { !it.isVideo && !it.isAudio }
     val videosCount = rawMediaItems.count { it.isVideo }
+    val audioCount = rawMediaItems.count { it.isAudio }
     val totalSizeBytes = rawMediaItems.sumOf { it.size }
     val totalSizeFormatted = formatBytes(totalSizeBytes)
 
@@ -170,6 +172,7 @@ fun HostScreen(
                 MediaStatsCard(
                     photosCount = photosCount,
                     videosCount = videosCount,
+                    audioCount = audioCount,
                     totalSize = totalSizeFormatted,
                     statusMessage = statusMessage,
                     onRescan = { viewModel.refreshLocalMedia() },
@@ -338,6 +341,7 @@ private fun RoomCodeCard(
 private fun MediaStatsCard(
     photosCount: Int,
     videosCount: Int,
+    audioCount: Int,
     totalSize: String,
     statusMessage: String,
     onRescan: () -> Unit,
@@ -394,9 +398,15 @@ private fun MediaStatsCard(
                     color = Indigo400
                 )
                 StatBadge(
+                    icon = Icons.Default.Audiotrack,
+                    value = audioCount.toString(),
+                    label = "Audio",
+                    color = Color(0xFF38BDF8)
+                )
+                StatBadge(
                     icon = Icons.Default.Speed,
                     value = totalSize,
-                    label = "Total Size",
+                    label = "Total",
                     color = Emerald500
                 )
             }
@@ -426,7 +436,7 @@ private fun MediaStatsCard(
                 }
             }
 
-            if (photosCount == 0 && videosCount == 0) {
+            if (photosCount == 0 && videosCount == 0 && audioCount == 0) {
                 Spacer(modifier = Modifier.height(10.dp))
                 Button(
                     onClick = onSeedDemo,

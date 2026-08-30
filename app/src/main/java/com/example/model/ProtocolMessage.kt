@@ -56,6 +56,7 @@ sealed class ProtocolMessage {
                     obj.put("date", item.dateModified)
                     obj.put("duration", item.durationMs)
                     obj.put("isVideo", item.isVideo)
+                    obj.put("isAudio", item.isAudio)
                     obj.put("bucket", item.bucketName)
                     obj.put("path", item.relativePath)
                     array.put(obj)
@@ -78,6 +79,7 @@ sealed class ProtocolMessage {
                     obj.put("date", item.dateModified)
                     obj.put("duration", item.durationMs)
                     obj.put("isVideo", item.isVideo)
+                    obj.put("isAudio", item.isAudio)
                     obj.put("bucket", item.bucketName)
                     obj.put("path", item.relativePath)
                     array.put(obj)
@@ -140,15 +142,18 @@ sealed class ProtocolMessage {
                         val list = mutableListOf<MediaItem>()
                         for (i in 0 until array.length()) {
                             val obj = array.getJSONObject(i)
+                            val mime = obj.optString("mime", "image/jpeg")
+                            val isAudio = obj.optBoolean("isAudio", false) || mime.startsWith("audio/")
                             list.add(
                                 MediaItem(
                                     id = obj.getString("id"),
                                     displayName = obj.getString("name"),
-                                    mimeType = obj.optString("mime", "image/jpeg"),
+                                    mimeType = mime,
                                     size = obj.optLong("size", 0L),
                                     dateModified = obj.optLong("date", 0L),
                                     durationMs = obj.optLong("duration", 0L),
                                     isVideo = obj.optBoolean("isVideo", false),
+                                    isAudio = isAudio,
                                     bucketName = obj.optString("bucket", "Storage"),
                                     relativePath = obj.optString("path", "")
                                 )
@@ -164,15 +169,18 @@ sealed class ProtocolMessage {
                         val list = mutableListOf<MediaItem>()
                         for (i in 0 until array.length()) {
                             val obj = array.getJSONObject(i)
+                            val mime = obj.optString("mime", "image/jpeg")
+                            val isAudio = obj.optBoolean("isAudio", false) || mime.startsWith("audio/")
                             list.add(
                                 MediaItem(
                                     id = obj.getString("id"),
                                     displayName = obj.getString("name"),
-                                    mimeType = obj.optString("mime", "image/jpeg"),
+                                    mimeType = mime,
                                     size = obj.optLong("size", 0L),
                                     dateModified = obj.optLong("date", 0L),
                                     durationMs = obj.optLong("duration", 0L),
                                     isVideo = obj.optBoolean("isVideo", false),
+                                    isAudio = isAudio,
                                     bucketName = obj.optString("bucket", "Storage"),
                                     relativePath = obj.optString("path", "")
                                 )

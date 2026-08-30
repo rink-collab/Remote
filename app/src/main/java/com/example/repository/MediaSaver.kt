@@ -96,11 +96,14 @@ class MediaSaver(private val context: Context) {
 
     private fun saveToPublicStorage(tempFile: File, fileName: String, mimeType: String): Uri? {
         val isVideo = mimeType.startsWith("video")
+        val isAudio = mimeType.startsWith("audio")
         val contentResolver = context.contentResolver
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val collection = if (isVideo) {
                 MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            } else if (isAudio) {
+                MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
             } else if (mimeType.startsWith("image")) {
                 MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
             } else {
@@ -130,6 +133,8 @@ class MediaSaver(private val context: Context) {
             // Pre-Android 10
             val directory = if (isVideo) {
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+            } else if (isAudio) {
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
             } else {
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
             }

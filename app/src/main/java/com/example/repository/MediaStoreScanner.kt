@@ -161,6 +161,7 @@ class MediaStoreScanner(private val context: Context) {
                                 dateModified = date,
                                 durationMs = duration,
                                 isVideo = true,
+                                isAudio = false,
                                 bucketName = bucketName.ifBlank { "Videos" },
                                 relativePath = relativePath,
                                 uriString = contentUri.toString()
@@ -173,7 +174,81 @@ class MediaStoreScanner(private val context: Context) {
             Log.e(TAG, "Error querying MediaStore videos", e)
         }
 
-        // 3. Fallback: If 0 items (e.g. clean emulator / secondary phone without photos taken yet), scan app storage / demo vault
+        // 3. Query Audio files
+        val audioProjection = mutableListOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.DISPLAY_NAME,
+            MediaStore.Audio.Media.MIME_TYPE,
+            MediaStore.Audio.Media.SIZE,
+            MediaStore.Audio.Media.DATE_MODIFIED,
+            MediaStore.Audio.Media.DURATION
+        ).apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                add(MediaStore.Audio.Media.BUCKET_DISPLAY_NAME)
+                add(MediaStore.Audio.Media.RELATIVE_PATH)
+            } else {
+                add(MediaStore.Audio.Media.DATA)
+            }
+        }.toTypedArray()
+
+        val audioSortOrder = "${MediaStore.Audio.Media.DATE_MODIFIED} DESC"
+
+        try {
+            contentResolver.query(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                audioProjection,
+                null,
+                null,
+                audioSortOrder
+            )?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
+                val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.MIME_TYPE)
+                val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)
+                val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
+                val durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+                val bucketCol = cursor.getColumnIndex(MediaStore.Audio.Media.BUCKET_DISPLAY_NAME)
+                val pathCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    cursor.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
+                } else {
+                    cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
+                }
+
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idCol)
+                    val name = cursor.getString(nameCol) ?: "Audio_$id"
+                    val mime = cursor.getString(mimeCol) ?: "audio/mpeg"
+                    val size = cursor.getLong(sizeCol)
+                    val date = cursor.getLong(dateCol)
+                    val duration = cursor.getLong(durationCol)
+                    val bucketName = if (bucketCol >= 0) cursor.getString(bucketCol) ?: "Music" else "Music"
+                    val relativePath = if (pathCol >= 0) cursor.getString(pathCol) ?: "" else ""
+                    val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
+
+                    if (size > 0) {
+                        mediaList.add(
+                            MediaItem(
+                                id = "aud_$id",
+                                displayName = name,
+                                mimeType = mime,
+                                size = size,
+                                dateModified = date,
+                                durationMs = duration,
+                                isVideo = false,
+                                isAudio = true,
+                                bucketName = bucketName.ifBlank { "Music" },
+                                relativePath = relativePath,
+                                uriString = contentUri.toString()
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error querying MediaStore audio", e)
+        }
+
+        // 4. Fallback: If 0 items (e.g. clean emulator / secondary phone without photos taken yet), scan app storage / demo vault
         if (mediaList.isEmpty()) {
             val appMedia = scanAppDirectories()
             mediaList.addAll(appMedia)
@@ -192,16 +267,31 @@ class MediaStoreScanner(private val context: Context) {
                 vaultDir.listFiles()?.forEach { file ->
                     if (file.isFile && file.length() > 0) {
                         val isVideo = file.name.endsWith(".mp4", ignoreCase = true)
+                        val isAudio = file.name.endsWith(".mp3", ignoreCase = true) ||
+                            file.name.endsWith(".m4a", ignoreCase = true) ||
+                            file.name.endsWith(".aac", ignoreCase = true) ||
+                            file.name.endsWith(".wav", ignoreCase = true) ||
+                            file.name.endsWith(".ogg", ignoreCase = true) ||
+                            file.name.endsWith(".flac", ignoreCase = true)
+                        val mime = when {
+                            isVideo -> "video/mp4"
+                            file.name.endsWith(".mp3", ignoreCase = true) -> "audio/mpeg"
+                            file.name.endsWith(".m4a", ignoreCase = true) -> "audio/mp4"
+                            file.name.endsWith(".wav", ignoreCase = true) -> "audio/wav"
+                            isAudio -> "audio/mpeg"
+                            else -> "image/jpeg"
+                        }
                         list.add(
                             MediaItem(
                                 id = "local_${file.name.hashCode()}",
                                 displayName = file.name,
-                                mimeType = if (isVideo) "video/mp4" else "image/jpeg",
+                                mimeType = mime,
                                 size = file.length(),
                                 dateModified = file.lastModified() / 1000,
                                 isVideo = isVideo,
-                                bucketName = "Host Vault",
-                                relativePath = "HostVault/",
+                                isAudio = isAudio,
+                                bucketName = if (isAudio) "Music" else "Host Vault",
+                                relativePath = if (isAudio) "Music/" else "HostVault/",
                                 uriString = Uri.fromFile(file).toString()
                             )
                         )
@@ -231,6 +321,9 @@ class MediaStoreScanner(private val context: Context) {
                 SampleSpec("Project_Report_Q3.jpg", "Download", "Download", 0xFF1E293B.toInt(), 0xFF475569.toInt(), "Studio Project Floorplan"),
                 SampleSpec("Tax_Invoice_8492.jpg", "Download/Invoices", "Invoices", 0xFF334155.toInt(), 0xFF64748B.toInt(), "Invoice Receipt #8492"),
                 SampleSpec("Drone_Flyover_Teaser.jpg", "Movies/Drone", "Drone", 0xFFBE123C.toInt(), 0xFFFB7185.toInt(), "4K Drone Reel Trailer"),
+                SampleSpec("Summer_Chill_Lofi.mp3", "Music/Favorites", "Favorites", 0xFF0284C7.toInt(), 0xFF38BDF8.toInt(), "Summer Chill Lofi Beats", isAudio = true, durationMs = 194000L),
+                SampleSpec("Acoustic_Guitar_Solo.mp3", "Music/Guitar", "Guitar", 0xFFD97706.toInt(), 0xFFFBBF24.toInt(), "Acoustic Fingerstyle Solo", isAudio = true, durationMs = 142000L),
+                SampleSpec("Voice_Memo_0829.m4a", "Recordings", "Recordings", 0xFF059669.toInt(), 0xFF34D399.toInt(), "Studio Meeting Note Memo", isAudio = true, durationMs = 65000L),
                 SampleSpec("App_Cache_Manifest.jpg", ".android/data", ".android", 0xFF374151.toInt(), 0xFF6B7280.toInt(), "App Manifest Backup"),
                 SampleSpec("Beta_Telemetry_State.jpg", ".BetaDataStorage", ".BetaDataStorage", 0xFF1F2937.toInt(), 0xFF4B5563.toInt(), "Telemetry Diagnostic")
             )
@@ -238,40 +331,57 @@ class MediaStoreScanner(private val context: Context) {
             samples.forEach { spec ->
                 val file = File(vaultDir, spec.name)
                 if (!file.exists() || file.length() == 0L) {
-                    val bmp = Bitmap.createBitmap(600, 600, Bitmap.Config.ARGB_8888)
-                    val canvas = Canvas(bmp)
-                    val paint = Paint().apply {
-                        isAntiAlias = true
-                    }
-                    // Draw nice gradient / solid background
-                    paint.color = spec.colorTop
-                    canvas.drawRect(0f, 0f, 600f, 300f, paint)
-                    paint.color = spec.colorBottom
-                    canvas.drawRect(0f, 300f, 600f, 600f, paint)
+                    if (spec.isAudio) {
+                        // Write dummy audio bytes for demo vault
+                        FileOutputStream(file).use { out ->
+                            val dummyBytes = ByteArray(512 * 1024) { (it % 128).toByte() }
+                            out.write(dummyBytes)
+                        }
+                    } else {
+                        val bmp = Bitmap.createBitmap(600, 600, Bitmap.Config.ARGB_8888)
+                        val canvas = Canvas(bmp)
+                        val paint = Paint().apply {
+                            isAntiAlias = true
+                        }
+                        // Draw nice gradient / solid background
+                        paint.color = spec.colorTop
+                        canvas.drawRect(0f, 0f, 600f, 300f, paint)
+                        paint.color = spec.colorBottom
+                        canvas.drawRect(0f, 300f, 600f, 600f, paint)
 
-                    // Draw text label
-                    paint.color = Color.WHITE
-                    paint.textSize = 36f
-                    paint.textAlign = Paint.Align.CENTER
-                    canvas.drawText(spec.title, 300f, 290f, paint)
-                    paint.textSize = 24f
-                    paint.color = 0xCCFFFFFF.toInt()
-                    canvas.drawText("${spec.bucket} • Shared via P2P", 300f, 340f, paint)
+                        // Draw text label
+                        paint.color = Color.WHITE
+                        paint.textSize = 36f
+                        paint.textAlign = Paint.Align.CENTER
+                        canvas.drawText(spec.title, 300f, 290f, paint)
+                        paint.textSize = 24f
+                        paint.color = 0xCCFFFFFF.toInt()
+                        canvas.drawText("${spec.bucket} • Shared via P2P", 300f, 340f, paint)
 
-                    FileOutputStream(file).use { out ->
-                        bmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                        FileOutputStream(file).use { out ->
+                            bmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                        }
+                        bmp.recycle()
                     }
-                    bmp.recycle()
+                }
+
+                val mime = when {
+                    spec.name.endsWith(".mp4", ignoreCase = true) -> "video/mp4"
+                    spec.name.endsWith(".mp3", ignoreCase = true) -> "audio/mpeg"
+                    spec.name.endsWith(".m4a", ignoreCase = true) -> "audio/mp4"
+                    else -> "image/jpeg"
                 }
 
                 list.add(
                     MediaItem(
                         id = "vault_${file.name.hashCode()}",
                         displayName = file.name,
-                        mimeType = "image/jpeg",
+                        mimeType = mime,
                         size = file.length(),
                         dateModified = System.currentTimeMillis() / 1000,
-                        isVideo = false,
+                        durationMs = spec.durationMs,
+                        isVideo = spec.name.endsWith(".mp4", ignoreCase = true),
+                        isAudio = spec.isAudio,
                         bucketName = spec.bucket,
                         relativePath = spec.relativePath,
                         uriString = Uri.fromFile(file).toString()
@@ -290,10 +400,16 @@ class MediaStoreScanner(private val context: Context) {
         val bucket: String,
         val colorTop: Int,
         val colorBottom: Int,
-        val title: String
+        val title: String,
+        val isAudio: Boolean = false,
+        val durationMs: Long = 0L
     )
 
     suspend fun generateThumbnailBase64(mediaItem: MediaItem): String? = withContext(Dispatchers.IO) {
+        // Do not generate or send cover thumbnail for audio files as requested
+        if (mediaItem.isAudio || mediaItem.mimeType.startsWith("audio/")) {
+            return@withContext null
+        }
         val uriStr = mediaItem.uriString ?: return@withContext null
         val uri = Uri.parse(uriStr)
         val contentResolver = context.contentResolver

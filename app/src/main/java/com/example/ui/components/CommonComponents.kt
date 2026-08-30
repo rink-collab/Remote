@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
@@ -128,11 +129,12 @@ fun ConnectionBadge(
 fun MediaThumbnail(
     base64String: String?,
     isVideo: Boolean,
+    isAudio: Boolean = false,
     durationText: String,
     modifier: Modifier = Modifier
 ) {
-    val bitmap = remember(base64String) {
-        if (!base64String.isNullOrEmpty()) {
+    val bitmap = remember(base64String, isAudio) {
+        if (!isAudio && !base64String.isNullOrEmpty()) {
             try {
                 val bytes = Base64.decode(base64String, Base64.DEFAULT)
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
@@ -144,9 +146,36 @@ fun MediaThumbnail(
 
     Box(
         modifier = modifier
-            .background(Slate800)
+            .background(if (isAudio) Slate800 else Slate800)
     ) {
-        if (bitmap != null) {
+        if (isAudio) {
+            // Audio File: Clean icon/logo without cover as requested
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                            colors = listOf(Slate800, DarkSurfaceVariant)
+                        )
+                    )
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(Cyan400.copy(alpha = 0.12f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Audiotrack,
+                        contentDescription = "Audio file",
+                        tint = Cyan400,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+        } else if (bitmap != null) {
             Image(
                 bitmap = bitmap,
                 contentDescription = if (isVideo) "Video thumbnail" else "Photo thumbnail",
@@ -195,6 +224,33 @@ fun MediaThumbnail(
                             )
                         )
                     }
+                }
+            }
+        } else if (isAudio && durationText.isNotEmpty()) {
+            // Audio Duration Pill (Top Left)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(5.dp)
+                    .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 5.dp, vertical = 2.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Audiotrack,
+                        contentDescription = null,
+                        tint = Cyan400,
+                        modifier = Modifier.size(11.dp)
+                    )
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text(
+                        text = durationText,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 10.sp,
+                            color = Color.White,
+                            fontWeight = FontWeight.Medium
+                        )
+                    )
                 }
             }
         }
@@ -257,6 +313,7 @@ fun MediaDetailDialog(
                     MediaThumbnail(
                         base64String = item.thumbnailBase64,
                         isVideo = item.isVideo,
+                        isAudio = item.isAudio,
                         durationText = item.formattedDuration,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -292,7 +349,7 @@ fun MediaDetailDialog(
                             fontWeight = FontWeight.SemiBold
                         )
                     }
-                    if (item.isVideo && item.durationMs > 0) {
+                    if ((item.isVideo || item.isAudio) && item.durationMs > 0) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),

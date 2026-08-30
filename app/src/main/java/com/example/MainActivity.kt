@@ -66,6 +66,7 @@ fun MainAppContent(viewModel: PeerMediaViewModel) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissionsToRequest.add(Manifest.permission.READ_MEDIA_IMAGES)
             permissionsToRequest.add(Manifest.permission.READ_MEDIA_VIDEO)
+            permissionsToRequest.add(Manifest.permission.READ_MEDIA_AUDIO)
         } else {
             permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
             if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {

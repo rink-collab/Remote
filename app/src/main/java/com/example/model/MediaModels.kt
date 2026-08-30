@@ -10,6 +10,7 @@ data class MediaItem(
     val dateModified: Long, // Epoch seconds or millis
     val durationMs: Long = 0L,
     val isVideo: Boolean = false,
+    val isAudio: Boolean = false,
     val bucketName: String = "Internal Storage", // Directory/Album name
     val relativePath: String = "", // e.g. "DCIM/Camera/"
     val uriString: String? = null, // Host device local uri
@@ -32,7 +33,7 @@ data class MediaItem(
 
     val formattedDuration: String
         get() {
-            if (!isVideo || durationMs <= 0) return ""
+            if ((!isVideo && !isAudio) || durationMs <= 0) return ""
             val totalSeconds = durationMs / 1000
             val minutes = totalSeconds / 60
             val seconds = totalSeconds % 60
@@ -64,9 +65,10 @@ enum class BrowserViewMode {
 }
 
 enum class MediaFilter(val label: String) {
-    ALL("All Media"),
+    ALL("All"),
     PHOTOS("Photos"),
-    VIDEOS("Videos")
+    VIDEOS("Videos"),
+    AUDIO("Audio")
 }
 
 enum class ConnectionStatus {

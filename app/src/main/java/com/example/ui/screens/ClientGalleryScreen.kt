@@ -381,7 +381,7 @@ fun ClientGalleryScreen(
                         ) {
                             items(currentFolderFiles, key = { it.id }) { item ->
                                 LaunchedEffect(item.id) {
-                                    if (item.thumbnailBase64 == null) {
+                                    if (!item.isAudio && item.thumbnailBase64 == null) {
                                         viewModel.requestThumbnail(item.id)
                                     }
                                 }
@@ -640,7 +640,7 @@ private fun SearchAndFilterBar(
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearchChange,
-            placeholder = { Text("Search folders, photos, videos...", color = Slate600, fontSize = 13.sp) },
+            placeholder = { Text("Search folders, photos, videos, audio...", color = Slate600, fontSize = 13.sp) },
             leadingIcon = {
                 Icon(
                     imageVector = Icons.Default.Search,
@@ -743,6 +743,7 @@ private fun GalleryGridItem(
         MediaThumbnail(
             base64String = item.thumbnailBase64,
             isVideo = item.isVideo,
+            isAudio = item.isAudio,
             durationText = item.formattedDuration,
             modifier = Modifier.fillMaxSize()
         )

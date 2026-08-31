@@ -1,9 +1,5 @@
 package com.example.ui.screens
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -22,17 +18,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.Sensors
-import androidx.compose.material.icons.filled.WifiTethering
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
@@ -57,9 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -67,7 +58,6 @@ import com.example.model.ActivityLog
 import com.example.model.ConnectionStatus
 import com.example.model.TransferProgress
 import com.example.ui.components.ConnectionBadge
-import com.example.ui.theme.Amber500
 import com.example.ui.theme.Cyan400
 import com.example.ui.theme.Cyan600
 import com.example.ui.theme.DarkBackground
@@ -80,7 +70,6 @@ import com.example.ui.theme.Indigo600
 import com.example.ui.theme.Rose500
 import com.example.ui.theme.Slate100
 import com.example.ui.theme.Slate600
-import com.example.ui.theme.Slate700
 import com.example.ui.theme.Slate800
 import com.example.viewmodel.PeerMediaViewModel
 
@@ -88,13 +77,10 @@ import com.example.viewmodel.PeerMediaViewModel
 @Composable
 fun HostScreen(
     viewModel: PeerMediaViewModel,
-    onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val statusMessage by viewModel.statusMessage.collectAsState()
-    val roomCode by viewModel.roomCode.collectAsState()
     val myHostDeviceName by viewModel.myHostDeviceName.collectAsState()
     val rawMediaItems by viewModel.rawMediaItems.collectAsState()
     val transferMap by viewModel.transferMap.collectAsState()
@@ -110,30 +96,42 @@ fun HostScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            text = "Hosting Media Vault",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Indigo500, Cyan600)
+                                    )
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CloudUpload,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
                             )
-                        )
-                        Text(
-                            text = "Device: $myHostDeviceName",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                color = Indigo400,
-                                fontSize = 11.sp
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Peer Media Host",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
                             )
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White
-                        )
+                            Text(
+                                text = "Vault Server • $myHostDeviceName",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = Cyan400,
+                                    fontSize = 11.sp
+                                )
+                            )
+                        }
                     }
                 },
                 actions = {
@@ -216,7 +214,7 @@ fun HostScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = "No activity yet. Waiting for requests from primary device.",
+                            text = "No activity yet. Waiting for requests from client device.",
                             style = MaterialTheme.typography.bodySmall.copy(color = Slate600),
                             modifier = Modifier.padding(16.dp)
                         )
@@ -273,7 +271,7 @@ private fun HostBroadcastingCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (isConnected) "CONNECTED TO PRIMARY DEVICE" else "ONLINE & READY TO CONNECT",
+                        text = if (isConnected) "CONNECTED TO CLIENT" else "ONLINE & READY FOR CLIENTS",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Bold,
                             color = if (isConnected) Emerald500 else Cyan400,
@@ -317,7 +315,7 @@ private fun HostBroadcastingCard(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = if (isConnected) "Streaming live gallery to connected primary device." else "This device is broadcasting automatically. Tap on this device in the Client app to connect directly without PIN.",
+                text = if (isConnected) "P2P WebRTC Direct Connection is active. Streaming media to client." else "This standalone host is broadcasting automatically on your network. Open the Client App to discover and connect directly.",
                 style = MaterialTheme.typography.bodySmall.copy(
                     color = Slate100.copy(alpha = 0.75f),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -341,7 +339,7 @@ private fun HostBroadcastingCard(
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Re-broadcast Device", color = Slate100)
+                Text("Re-broadcast Host", color = Slate100)
             }
         }
     }
@@ -370,7 +368,7 @@ private fun MediaStatsCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Shared Media Vault",
+                    text = "Indexed Vault Content",
                     style = MaterialTheme.typography.titleSmall.copy(
                         fontWeight = FontWeight.SemiBold,
                         color = Color.White
@@ -416,7 +414,7 @@ private fun MediaStatsCard(
                 StatBadge(
                     icon = Icons.Default.Speed,
                     value = totalSize,
-                    label = "Total",
+                    label = "Total Size",
                     color = Emerald500
                 )
             }
@@ -454,7 +452,7 @@ private fun MediaStatsCard(
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Seed Sample Media Files (Demo)", style = MaterialTheme.typography.labelMedium)
+                    Text("Seed Sample Media Vault (Demo)", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -566,7 +564,7 @@ private fun TransferCard(transfer: TransferProgress) {
                     style = MaterialTheme.typography.labelSmall.copy(color = Slate600)
                 )
                 Text(
-                    text = if (transfer.isComplete) "Completed" else "Streaming chunk...",
+                    text = if (transfer.isComplete) "Completed" else "Streaming raw binary...",
                     style = MaterialTheme.typography.labelSmall.copy(
                         color = if (transfer.isComplete) Emerald500 else Cyan400
                     )

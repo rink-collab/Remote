@@ -1,7 +1,5 @@
 package com.example.model
 
-import android.net.Uri
-
 data class MediaItem(
     val id: String,
     val displayName: String,
@@ -13,10 +11,7 @@ data class MediaItem(
     val isAudio: Boolean = false,
     val bucketName: String = "Internal Storage", // Directory/Album name
     val relativePath: String = "", // e.g. "DCIM/Camera/"
-    val uriString: String? = null, // Host device local uri
-    val thumbnailBase64: String? = null, // Received on client device
-    val localUri: Uri? = null, // Saved downloaded file on client
-    val isDownloaded: Boolean = false
+    val uriString: String? = null // Host device local uri
 ) {
     val formattedSize: String
         get() {
@@ -41,36 +36,6 @@ data class MediaItem(
         }
 }
 
-data class DirectoryGroup(
-    val name: String,
-    val count: Int,
-    val latestItem: MediaItem? = null
-)
-
-data class FolderEntry(
-    val name: String,          // e.g. "Camera", "Pictures", "DCIM"
-    val fullPath: String,      // e.g. "DCIM/Camera"
-    val fileCount: Int,        // count of media files in this subtree or directory
-    val subFolderCount: Int = 0
-)
-
-data class BreadcrumbItem(
-    val label: String,         // e.g. "Device", "DCIM", "Camera"
-    val path: String           // e.g. "", "DCIM", "DCIM/Camera"
-)
-
-enum class BrowserViewMode {
-    HIERARCHY, // Folder grid with folder navigation
-    FLAT_GALLERY // All media chronological grid
-}
-
-enum class MediaFilter(val label: String) {
-    ALL("All"),
-    PHOTOS("Photos"),
-    VIDEOS("Videos"),
-    AUDIO("Audio")
-}
-
 enum class ConnectionStatus {
     IDLE,
     CONNECTING_FIREBASE,
@@ -81,18 +46,12 @@ enum class ConnectionStatus {
     ERROR
 }
 
-enum class AppRole {
-    NONE,
-    HOST,  // Secondary device serving photos
-    CLIENT // Primary device browsing & downloading
-}
-
 data class TransferProgress(
     val fileId: String,
     val fileName: String,
     val bytesTransferred: Long,
     val totalBytes: Long,
-    val isUpload: Boolean = false,
+    val isUpload: Boolean = true,
     val speedKbps: Long = 0,
     val isComplete: Boolean = false,
     val error: String? = null

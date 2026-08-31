@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Peer Media"
+rootProject.name = "Peer Media Host"
 
 include(":app")

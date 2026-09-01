@@ -91,6 +91,7 @@ dependencies {
   implementation(platform(libs.firebase.bom))
   implementation(libs.firebase.database)
   implementation(libs.stream.webrtc.android)
+  implementation(libs.androidx.work.runtime.ktx)
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   // implementation(libs.androidx.camera.camera2)

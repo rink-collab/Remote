@@ -25,8 +25,10 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -160,6 +162,11 @@ fun HostScreen(
                     status = connectionStatus,
                     onRestart = { viewModel.startHosting() }
                 )
+            }
+
+            item {
+                // Background WorkManager Sync Status Card
+                BackgroundKeepAliveCard()
             }
 
             item {
@@ -606,6 +613,71 @@ private fun ActivityLogRow(log: ActivityLog) {
                 ),
                 modifier = Modifier.weight(1f)
             )
+        }
+    }
+}
+
+@Composable
+private fun BackgroundKeepAliveCard() {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
+        border = BorderStroke(1.dp, Indigo500.copy(alpha = 0.3f)),
+        modifier = Modifier.fillMaxWidth().testTag("background_keepalive_card")
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Indigo500.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Schedule,
+                    contentDescription = null,
+                    tint = Indigo400,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "WorkManager Keep-Alive",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        color = Emerald500.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = "Every 15m",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Emerald500,
+                                fontSize = 10.sp
+                            ),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Syncs host presence in background even if system kills the app.",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = Slate100.copy(alpha = 0.65f),
+                        fontSize = 11.sp
+                    )
+                )
+            }
         }
     }
 }

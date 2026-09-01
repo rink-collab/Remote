@@ -116,8 +116,8 @@ class PeerMediaViewModel(application: Application) : AndroidViewModel(applicatio
             val audioCount = localMedia.count { it.isAudio }
             addLog("Indexed ${localMedia.size} files ($photosCount photos, $videosCount videos, $audioCount audio)", isSuccess = true)
 
-            // 2. Generate Host ID
-            val hostId = signalingManager.generateHostId()
+            // 2. Obtain Persistent Host ID
+            val hostId = signalingManager.getOrCreateHostId(getApplication())
             val devName = getLocalDeviceName()
             _myHostDeviceName.value = devName
             _roomCode.value = hostId

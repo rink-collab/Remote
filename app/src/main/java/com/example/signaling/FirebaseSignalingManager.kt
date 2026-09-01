@@ -34,6 +34,16 @@ class FirebaseSignalingManager {
     private var hostsDiscoveryListener: ValueEventListener? = null
     private var currentRoomRef: DatabaseReference? = null
 
+    fun getOrCreateHostId(context: android.content.Context): String {
+        val prefs = context.getSharedPreferences("peer_media_host_config", android.content.Context.MODE_PRIVATE)
+        var hostId = prefs.getString("host_id", null)
+        if (hostId.isNullOrEmpty()) {
+            hostId = "host_" + java.util.UUID.randomUUID().toString().take(8)
+            prefs.edit().putString("host_id", hostId).apply()
+        }
+        return hostId
+    }
+
     fun generateHostId(): String {
         return "host_" + java.util.UUID.randomUUID().toString().take(8)
     }

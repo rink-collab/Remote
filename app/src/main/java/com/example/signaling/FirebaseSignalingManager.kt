@@ -34,16 +34,6 @@ class FirebaseSignalingManager {
     private var hostsDiscoveryListener: ValueEventListener? = null
     private var currentRoomRef: DatabaseReference? = null
 
-    fun getOrCreateHostId(context: android.content.Context): String {
-        val prefs = context.getSharedPreferences("peer_media_host_config", android.content.Context.MODE_PRIVATE)
-        var hostId = prefs.getString("host_id", null)
-        if (hostId.isNullOrEmpty()) {
-            hostId = "host_" + java.util.UUID.randomUUID().toString().take(8)
-            prefs.edit().putString("host_id", hostId).apply()
-        }
-        return hostId
-    }
-
     fun generateHostId(): String {
         return "host_" + java.util.UUID.randomUUID().toString().take(8)
     }
@@ -60,6 +50,7 @@ class FirebaseSignalingManager {
         photosCount: Int,
         videosCount: Int,
         audioCount: Int,
+        fcmToken: String? = null,
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
@@ -69,7 +60,7 @@ class FirebaseSignalingManager {
         }
 
         currentRoomRef = ref.child(roomId)
-        val roomData = mapOf(
+        val roomData = mutableMapOf<String, Any?>(
             "hostId" to roomId,
             "deviceName" to deviceName,
             "deviceModel" to deviceModel,
@@ -82,6 +73,9 @@ class FirebaseSignalingManager {
             "createdAt" to System.currentTimeMillis(),
             "lastSeen" to System.currentTimeMillis()
         )
+        if (!fcmToken.isNullOrEmpty()) {
+            roomData["fcmToken"] = fcmToken
+        }
 
         currentRoomRef?.setValue(roomData)
             ?.addOnSuccessListener {
@@ -91,6 +85,12 @@ class FirebaseSignalingManager {
             ?.addOnFailureListener { e ->
                 onError(e.localizedMessage ?: "Failed to broadcast host in Firebase")
             }
+    }
+
+    fun updateHostFcmToken(roomId: String, token: String) {
+        if (roomId.isNotEmpty() && token.isNotEmpty()) {
+            roomsRef?.child(roomId)?.child("fcmToken")?.setValue(token)
+        }
     }
 
     fun stopListeningForOnlineHosts() {

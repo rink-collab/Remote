@@ -18,17 +18,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -47,12 +48,16 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -79,11 +84,13 @@ import com.example.viewmodel.PeerMediaViewModel
 @Composable
 fun HostScreen(
     viewModel: PeerMediaViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateBack: (() -> Unit)? = null
 ) {
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val statusMessage by viewModel.statusMessage.collectAsState()
     val myHostDeviceName by viewModel.myHostDeviceName.collectAsState()
+    val fcmToken by viewModel.fcmToken.collectAsState()
     val rawMediaItems by viewModel.rawMediaItems.collectAsState()
     val transferMap by viewModel.transferMap.collectAsState()
     val activityLogs by viewModel.activityLogs.collectAsState()
@@ -97,6 +104,17 @@ fun HostScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                navigationIcon = {
+                    if (onNavigateBack != null) {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back to FTP",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                },
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
@@ -165,8 +183,8 @@ fun HostScreen(
             }
 
             item {
-                // Background WorkManager Sync Status Card
-                BackgroundKeepAliveCard()
+                // FCM Remote Push Wake-up Card
+                FcmPushCard(fcmToken = fcmToken)
             }
 
             item {
@@ -617,71 +635,6 @@ private fun ActivityLogRow(log: ActivityLog) {
     }
 }
 
-@Composable
-private fun BackgroundKeepAliveCard() {
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
-        border = BorderStroke(1.dp, Indigo500.copy(alpha = 0.3f)),
-        modifier = Modifier.fillMaxWidth().testTag("background_keepalive_card")
-    ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Indigo500.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Schedule,
-                    contentDescription = null,
-                    tint = Indigo400,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "WorkManager Keep-Alive",
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White
-                        )
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Surface(
-                        color = Emerald500.copy(alpha = 0.15f),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text(
-                            text = "Every 15m",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = Emerald500,
-                                fontSize = 10.sp
-                            ),
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "Syncs host presence in background even if system kills the app.",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = Slate100.copy(alpha = 0.65f),
-                        fontSize = 11.sp
-                    )
-                )
-            }
-        }
-    }
-}
-
 private fun formatBytes(bytes: Long): String {
     val kb = bytes / 1024.0
     val mb = kb / 1024.0
@@ -691,5 +644,195 @@ private fun formatBytes(bytes: Long): String {
         mb >= 1.0 -> String.format("%.1f MB", mb)
         kb >= 1.0 -> String.format("%.0f KB", kb)
         else -> "$bytes B"
+    }
+}
+
+@Composable
+private fun FcmPushCard(fcmToken: String) {
+    val clipboardManager = LocalClipboardManager.current
+    var copied by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(copied) {
+        if (copied) {
+            kotlinx.coroutines.delay(2000)
+            copied = false
+        }
+    }
+
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
+        border = BorderStroke(1.dp, Indigo500.copy(alpha = 0.3f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("fcm_push_card")
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Indigo600.copy(alpha = 0.25f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.NotificationsActive,
+                            contentDescription = null,
+                            tint = Cyan400,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "FCM Remote Push Wake-up",
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        )
+                        Text(
+                            text = "Starts host server silently via Cloud Push",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = Slate100.copy(alpha = 0.6f),
+                                fontSize = 11.sp
+                            )
+                        )
+                    }
+                }
+
+                Surface(
+                    color = Emerald500.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, Emerald500.copy(alpha = 0.3f))
+                ) {
+                    Text(
+                        text = "LISTENING",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = Emerald500,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp
+                        ),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                text = "When an FCM push is received (target token or topic /topics/all_users), the background service starts hosting automatically without requiring the app to be open.",
+                style = MaterialTheme.typography.bodySmall.copy(
+                    color = Slate100.copy(alpha = 0.75f),
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Surface(
+                color = Indigo600.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.dp, Indigo500.copy(alpha = 0.3f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Subscribed Topic:",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = Slate100.copy(alpha = 0.7f),
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 11.sp
+                        )
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "all_users",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = Cyan400,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp
+                        )
+                    )
+                }
+            }
+
+            if (fcmToken.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Surface(
+                    color = DarkBackground,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, Slate800),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Device Push Token",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = Cyan400,
+                                    fontSize = 10.sp
+                                )
+                            )
+                            Text(
+                                text = fcmToken.take(24) + "..." + fcmToken.takeLast(12),
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = Slate100,
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace
+                                ),
+                                maxLines = 1
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(fcmToken))
+                                copied = true
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (copied) Emerald500 else Indigo600
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .height(32.dp)
+                                .testTag("copy_fcm_token_button")
+                        ) {
+                            Icon(
+                                imageVector = if (copied) Icons.Default.CheckCircle else Icons.Default.ContentCopy,
+                                contentDescription = "Copy Token",
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (copied) "Copied" else "Copy Token",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = Color.White,
+                                    fontSize = 11.sp
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }

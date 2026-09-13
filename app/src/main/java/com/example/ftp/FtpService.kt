@@ -38,7 +38,9 @@ class FtpService : Service() {
         const val EXTRA_PORT = "EXTRA_PORT"
         const val EXTRA_PASSWORD = "EXTRA_PASSWORD"
         const val EXTRA_SHOW_HIDDEN = "EXTRA_SHOW_HIDDEN"
+        const val EXTRA_SHOW_DEVICE_FOLDER = "EXTRA_SHOW_DEVICE_FOLDER"
         const val EXTRA_IP = "EXTRA_IP"
+        const val EXTRA_DEVICE_NAME = "EXTRA_DEVICE_NAME"
         const val EXTRA_STARTED_ON_HOTSPOT = "EXTRA_STARTED_ON_HOTSPOT"
         const val EXTRA_STARTED_ON_WIFI = "EXTRA_STARTED_ON_WIFI"
 
@@ -90,11 +92,13 @@ class FtpService : Service() {
         val port = intent?.getIntExtra(EXTRA_PORT, 2222) ?: 2222
         val password = intent?.getStringExtra(EXTRA_PASSWORD) ?: ""
         val showHidden = intent?.getBooleanExtra(EXTRA_SHOW_HIDDEN, false) ?: false
+        val showDeviceFolder = intent?.getBooleanExtra(EXTRA_SHOW_DEVICE_FOLDER, true) ?: true
+        val deviceName = intent?.getStringExtra(EXTRA_DEVICE_NAME) ?: DeviceNameHelper.getDeviceName(applicationContext)
         val ip = currentNet.primaryIp.ifEmpty { intent?.getStringExtra(EXTRA_IP) ?: "192.168.43.1" }
         val ftpUrl = "ftp://$ip:$port/"
 
         startForegroundNotification(ftpUrl)
-        startServer(port, password, showHidden, ftpUrl)
+        startServer(port, password, showHidden, showDeviceFolder, deviceName, ftpUrl)
         startNetworkMonitoring()
 
         return START_STICKY
@@ -216,7 +220,7 @@ class FtpService : Service() {
         }
     }
 
-    private fun startServer(port: Int, pass: String, showHidden: Boolean, url: String) {
+    private fun startServer(port: Int, pass: String, showHidden: Boolean, showDeviceFolder: Boolean, deviceName: String, url: String) {
         stopServer()
         acquireLocks()
         try {
@@ -226,6 +230,8 @@ class FtpService : Service() {
                 password = pass,
                 requirePassword = pass.isNotEmpty(),
                 showHiddenFiles = showHidden,
+                deviceName = deviceName,
+                showDeviceFolder = showDeviceFolder,
                 onConnectionChanged = { activeCount ->
                     FtpServerManager.updateActiveClients(activeCount)
                 }

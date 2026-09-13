@@ -30,6 +30,8 @@ class SimpleFtpServer(
     val password: String = "123456",
     val requirePassword: Boolean = true,
     val showHiddenFiles: Boolean = false,
+    val deviceName: String = "",
+    val showDeviceFolder: Boolean = true,
     private val onConnectionChanged: ((activeCount: Int) -> Unit)? = null
 ) {
     private val tag = "SimpleFtpServer"
@@ -41,6 +43,14 @@ class SimpleFtpServer(
     val isRunning: Boolean
         get() = serverSocket != null && serverSocket?.isClosed == false
 
+    val effectiveDeviceName: String by lazy {
+        if (deviceName.isNotBlank()) {
+            DeviceNameHelper.sanitize(deviceName).ifEmpty { "Android Device" }
+        } else {
+            DeviceNameHelper.getDeviceName(context)
+        }
+    }
+
     private val rootDir: File by lazy {
         val ext = Environment.getExternalStorageDirectory()
         if (ext != null && ext.exists() && ext.canRead()) {
@@ -50,12 +60,22 @@ class SimpleFtpServer(
         }
     }
 
+    private val sdCardDir: File? by lazy {
+        DeviceNameHelper.getSecondaryStorageDir(context)
+    }
+
+    sealed class ResolvedTarget {
+        object VirtualRoot : ResolvedTarget()
+        data class Real(val file: File, val isUnderInternal: Boolean) : ResolvedTarget()
+        object Invalid : ResolvedTarget()
+    }
+
     fun start() {
         if (isRunning) return
         try {
             serverSocket = ServerSocket(port, 50, InetAddress.getByName("0.0.0.0"))
             serverSocket?.reuseAddress = true
-            Log.d(tag, "FTP Server started on port $port, root: ${rootDir.absolutePath}")
+            Log.d(tag, "FTP Server started on port $port, deviceFolder: $effectiveDeviceName, root: ${rootDir.absolutePath}")
 
             serverJob = scope.launch {
                 while (isActive && serverSocket != null && !serverSocket!!.isClosed) {
@@ -98,7 +118,8 @@ class SimpleFtpServer(
 
         var reader: BufferedReader? = null
         var writer: BufferedWriter? = null
-        var currentDir = rootDir
+        // null means at Virtual Root "/" showing the device folder (if showDeviceFolder is true)
+        var currentDir: File? = if (showDeviceFolder) null else rootDir
         var isAuthenticated = !requirePassword || password.isEmpty()
         var username: String? = null
         var renameSource: File? = null
@@ -177,12 +198,22 @@ class SimpleFtpServer(
                         if (!isAuthenticated) {
                             send("530 Please login with USER and PASS.")
                         } else {
-                            val target = resolveFile(currentDir, arg)
-                            if (target.exists() && target.isDirectory) {
-                                currentDir = target
-                                send("250 Directory successfully changed to \"${getVirtualPath(currentDir)}\"")
-                            } else {
-                                send("550 Failed to change directory.")
+                            when (val resolved = resolveTarget(currentDir, arg)) {
+                                is ResolvedTarget.VirtualRoot -> {
+                                    currentDir = null
+                                    send("250 Directory changed to /")
+                                }
+                                is ResolvedTarget.Real -> {
+                                    if (resolved.file.exists() && resolved.file.isDirectory) {
+                                        currentDir = resolved.file
+                                        send("250 Directory changed to ${getVirtualPath(currentDir)}")
+                                    } else {
+                                        send("550 Failed to change directory: Not a directory.")
+                                    }
+                                }
+                                is ResolvedTarget.Invalid -> {
+                                    send("550 Failed to change directory: Directory not found.")
+                                }
                             }
                         }
                     }
@@ -190,12 +221,39 @@ class SimpleFtpServer(
                         if (!isAuthenticated) {
                             send("530 Please login with USER and PASS.")
                         } else {
-                            val parent = currentDir.parentFile
-                            if (parent != null && isChildOrSame(parent, rootDir)) {
-                                currentDir = parent
-                                send("200 Directory changed to \"${getVirtualPath(currentDir)}\"")
+                            if (!showDeviceFolder) {
+                                if (currentDir == null || currentDir == rootDir) {
+                                    currentDir = rootDir
+                                    send("200 Already at root directory")
+                                } else {
+                                    val parent = currentDir!!.parentFile
+                                    if (parent != null && isChildOrSame(parent, rootDir)) {
+                                        currentDir = parent
+                                        send("200 Directory changed to ${getVirtualPath(currentDir)}")
+                                    } else {
+                                        currentDir = rootDir
+                                        send("200 Directory changed to /")
+                                    }
+                                }
                             } else {
-                                send("200 Already at root directory \"/\"")
+                                if (currentDir == null) {
+                                    send("200 Already at root directory")
+                                } else if (currentDir == rootDir || (sdCardDir != null && currentDir == sdCardDir)) {
+                                    currentDir = null
+                                    send("200 Directory changed to /")
+                                } else {
+                                    val parent = currentDir!!.parentFile
+                                    if (parent != null && isChildOrSame(parent, rootDir)) {
+                                        currentDir = parent
+                                        send("200 Directory changed to ${getVirtualPath(currentDir)}")
+                                    } else if (parent != null && sdCardDir != null && isChildOrSame(parent, sdCardDir!!)) {
+                                        currentDir = parent
+                                        send("200 Directory changed to ${getVirtualPath(currentDir)}")
+                                    } else {
+                                        currentDir = null
+                                        send("200 Directory changed to /")
+                                    }
+                                }
                             }
                         }
                     }
@@ -253,23 +311,62 @@ class SimpleFtpServer(
                                 send("150 Here comes the directory listing.")
                                 try {
                                     val dataOut = BufferedWriter(OutputStreamWriter(dataSocket.getOutputStream(), Charsets.UTF_8))
-                                    val targetDir = if (arg.isNotEmpty() && !arg.startsWith("-")) resolveFile(currentDir, arg) else currentDir
-                                    val files = targetDir.listFiles() ?: emptyArray()
+                                    val pathArg = extractPathFromListArg(arg)
+                                    val targetResolved = if (pathArg.isNotEmpty()) {
+                                        resolveTarget(currentDir, pathArg)
+                                    } else {
+                                        if (currentDir == null) ResolvedTarget.VirtualRoot else ResolvedTarget.Real(currentDir!!, isChildOrSame(currentDir!!, rootDir))
+                                    }
                                     val dateFormat = SimpleDateFormat("MMM dd HH:mm", Locale.US)
                                     val yearFormat = SimpleDateFormat("MMM dd  yyyy", Locale.US)
                                     val sixMonthsAgo = System.currentTimeMillis() - 180L * 24 * 60 * 60 * 1000
 
-                                    for (file in files) {
-                                        if (!showHiddenFiles && file.name.startsWith(".")) continue
-                                        if (command == "NLST") {
-                                            dataOut.write("${file.name}\r\n")
-                                        } else {
-                                            val isDir = file.isDirectory
-                                            val perms = if (isDir) "drwxr-xr-x" else "-rw-r--r--"
-                                            val size = if (isDir) 4096 else file.length()
-                                            val modTime = file.lastModified()
+                                    when (targetResolved) {
+                                        is ResolvedTarget.VirtualRoot -> {
+                                            // Top level shows the device name folder
+                                            val modTime = rootDir.lastModified().let { if (it > 0) it else System.currentTimeMillis() }
                                             val dateStr = if (modTime > sixMonthsAgo) dateFormat.format(Date(modTime)) else yearFormat.format(Date(modTime))
-                                            dataOut.write("$perms 1 owner group $size $dateStr ${file.name}\r\n")
+                                            if (command == "NLST") {
+                                                dataOut.write("$effectiveDeviceName\r\n")
+                                                if (sdCardDir != null && sdCardDir!!.exists()) {
+                                                    dataOut.write("SD Card\r\n")
+                                                }
+                                            } else {
+                                                dataOut.write("drwxr-xr-x 1 owner group 4096 $dateStr $effectiveDeviceName\r\n")
+                                                if (sdCardDir != null && sdCardDir!!.exists()) {
+                                                    val sdMod = sdCardDir!!.lastModified().let { if (it > 0) it else System.currentTimeMillis() }
+                                                    val sdDateStr = if (sdMod > sixMonthsAgo) dateFormat.format(Date(sdMod)) else yearFormat.format(Date(sdMod))
+                                                    dataOut.write("drwxr-xr-x 1 owner group 4096 $sdDateStr SD Card\r\n")
+                                                }
+                                            }
+                                        }
+                                        is ResolvedTarget.Real -> {
+                                            val target = targetResolved.file
+                                            if (target.isDirectory) {
+                                                val files = target.listFiles() ?: emptyArray()
+                                                for (file in files) {
+                                                    if (!showHiddenFiles && file.name.startsWith(".")) continue
+                                                    if (command == "NLST") {
+                                                        dataOut.write("${file.name}\r\n")
+                                                    } else {
+                                                        val isDir = file.isDirectory
+                                                        val perms = if (isDir) "drwxr-xr-x" else "-rw-r--r--"
+                                                        val size = if (isDir) 4096 else file.length()
+                                                        val modTime = file.lastModified().let { if (it > 0) it else System.currentTimeMillis() }
+                                                        val dateStr = if (modTime > sixMonthsAgo) dateFormat.format(Date(modTime)) else yearFormat.format(Date(modTime))
+                                                        dataOut.write("$perms 1 owner group $size $dateStr ${file.name}\r\n")
+                                                    }
+                                                }
+                                            } else {
+                                                val perms = "-rw-r--r--"
+                                                val size = target.length()
+                                                val modTime = target.lastModified().let { if (it > 0) it else System.currentTimeMillis() }
+                                                val dateStr = if (modTime > sixMonthsAgo) dateFormat.format(Date(modTime)) else yearFormat.format(Date(modTime))
+                                                dataOut.write("$perms 1 owner group $size $dateStr ${target.name}\r\n")
+                                            }
+                                        }
+                                        is ResolvedTarget.Invalid -> {
+                                            // Empty list if invalid
                                         }
                                     }
                                     dataOut.flush()
@@ -296,18 +393,42 @@ class SimpleFtpServer(
                                 send("150 Opening data connection for MLSD.")
                                 try {
                                     val dataOut = BufferedWriter(OutputStreamWriter(dataSocket.getOutputStream(), Charsets.UTF_8))
-                                    val targetDir = if (arg.isNotEmpty()) resolveFile(currentDir, arg) else currentDir
-                                    val files = targetDir.listFiles() ?: emptyArray()
+                                    val pathArg = arg.trim()
+                                    val targetResolved = if (pathArg.isNotEmpty()) {
+                                        resolveTarget(currentDir, pathArg)
+                                    } else {
+                                        if (currentDir == null) ResolvedTarget.VirtualRoot else ResolvedTarget.Real(currentDir!!, isChildOrSame(currentDir!!, rootDir))
+                                    }
                                     val mlsdFormat = SimpleDateFormat("yyyyMMddHHmmss", Locale.US).apply {
                                         timeZone = TimeZone.getTimeZone("UTC")
                                     }
-                                    for (file in files) {
-                                        if (!showHiddenFiles && file.name.startsWith(".")) continue
-                                        val type = if (file.isDirectory) "dir" else "file"
-                                        val size = if (file.isDirectory) "" else "size=${file.length()};"
-                                        val modify = "modify=${mlsdFormat.format(Date(file.lastModified()))};"
-                                        val perm = if (file.isDirectory) "perm=cdeflmp;" else "perm=adfrw;"
-                                        dataOut.write("type=$type;$size$modify$perm ${file.name}\r\n")
+                                    when (targetResolved) {
+                                        is ResolvedTarget.VirtualRoot -> {
+                                            val modDate = mlsdFormat.format(Date(rootDir.lastModified().let { if (it > 0) it else System.currentTimeMillis() }))
+                                            dataOut.write("type=dir;size=4096;modify=$modDate;UNIX.mode=0755;UNIX.owner=owner;UNIX.group=group;perm=cdeflmp; $effectiveDeviceName\r\n")
+                                            if (sdCardDir != null && sdCardDir!!.exists()) {
+                                                val sdMod = mlsdFormat.format(Date(sdCardDir!!.lastModified().let { if (it > 0) it else System.currentTimeMillis() }))
+                                                dataOut.write("type=dir;size=4096;modify=$sdMod;UNIX.mode=0755;UNIX.owner=owner;UNIX.group=group;perm=cdeflmp; SD Card\r\n")
+                                            }
+                                        }
+                                        is ResolvedTarget.Real -> {
+                                            val target = targetResolved.file
+                                            val files = target.listFiles() ?: emptyArray()
+                                            for (file in files) {
+                                                if (!showHiddenFiles && file.name.startsWith(".")) continue
+                                                val isDir = file.isDirectory
+                                                val type = if (isDir) "dir" else "file"
+                                                val size = if (isDir) "size=4096;" else "size=${file.length()};"
+                                                val fileMod = file.lastModified().let { if (it > 0) it else System.currentTimeMillis() }
+                                                val modify = "modify=${mlsdFormat.format(Date(fileMod))};"
+                                                val perm = if (isDir) "perm=cdeflmp;" else "perm=adfrw;"
+                                                val unixMode = if (isDir) "UNIX.mode=0755;" else "UNIX.mode=0644;"
+                                                dataOut.write("type=$type;$size$modify${unixMode}UNIX.owner=owner;UNIX.group=group;$perm ${file.name}\r\n")
+                                            }
+                                        }
+                                        is ResolvedTarget.Invalid -> {
+                                            // Empty list
+                                        }
                                     }
                                     dataOut.flush()
                                     dataSocket.close()
@@ -324,8 +445,9 @@ class SimpleFtpServer(
                         if (!isAuthenticated) {
                             send("530 Please login.")
                         } else {
-                            val file = resolveFile(currentDir, arg)
-                            if (!file.exists() || file.isDirectory || !file.canRead()) {
+                            val resolved = resolveTarget(currentDir, arg)
+                            val file = if (resolved is ResolvedTarget.Real) resolved.file else null
+                            if (file == null || !file.exists() || file.isDirectory || !file.canRead()) {
                                 send("550 File not found or not accessible.")
                             } else {
                                 val dataSocket = getDataSocket(pasvServer, activeHost, activePort)
@@ -360,30 +482,34 @@ class SimpleFtpServer(
                         if (!isAuthenticated) {
                             send("530 Please login.")
                         } else {
-                            val file = resolveFile(currentDir, arg)
-                            val dataSocket = getDataSocket(pasvServer, activeHost, activePort)
-                            pasvServer = null
-                            if (dataSocket == null) {
-                                send("425 Can't open data connection.")
+                            val targetFile = resolveWriteTarget(currentDir, arg)
+                            if (targetFile == null) {
+                                send("550 Cannot upload directly to root. Please open the '$effectiveDeviceName' folder first.")
                             } else {
-                                send("150 Opening BINARY mode data connection for ${file.name}")
-                                try {
-                                    FileOutputStream(file).use { fos ->
-                                        dataSocket.getInputStream().use { `is` ->
-                                            val buffer = ByteArray(64 * 1024)
-                                            var bytesRead: Int
-                                            while (`is`.read(buffer).also { bytesRead = it } != -1) {
-                                                fos.write(buffer, 0, bytesRead)
+                                val dataSocket = getDataSocket(pasvServer, activeHost, activePort)
+                                pasvServer = null
+                                if (dataSocket == null) {
+                                    send("425 Can't open data connection.")
+                                } else {
+                                    send("150 Opening BINARY mode data connection for ${targetFile.name}")
+                                    try {
+                                        FileOutputStream(targetFile).use { fos ->
+                                            dataSocket.getInputStream().use { `is` ->
+                                                val buffer = ByteArray(64 * 1024)
+                                                var bytesRead: Int
+                                                while (`is`.read(buffer).also { bytesRead = it } != -1) {
+                                                    fos.write(buffer, 0, bytesRead)
+                                                }
+                                                fos.flush()
                                             }
-                                            fos.flush()
                                         }
+                                        send("226 Transfer complete.")
+                                    } catch (e: Exception) {
+                                        Log.e(tag, "STOR error", e)
+                                        send("426 Connection closed; transfer aborted.")
+                                    } finally {
+                                        dataSocket.close()
                                     }
-                                    send("226 Transfer complete.")
-                                } catch (e: Exception) {
-                                    Log.e(tag, "STOR error", e)
-                                    send("426 Connection closed; transfer aborted.")
-                                } finally {
-                                    dataSocket.close()
                                 }
                             }
                         }
@@ -392,29 +518,34 @@ class SimpleFtpServer(
                         if (!isAuthenticated) {
                             send("530 Please login.")
                         } else {
-                            val file = resolveFile(currentDir, arg)
-                            val dataSocket = getDataSocket(pasvServer, activeHost, activePort)
-                            pasvServer = null
-                            if (dataSocket == null) {
-                                send("425 Can't open data connection.")
+                            val targetFile = resolveWriteTarget(currentDir, arg)
+                            if (targetFile == null) {
+                                send("550 Cannot append to root. Please open the '$effectiveDeviceName' folder first.")
                             } else {
-                                send("150 Appending to ${file.name}")
-                                try {
-                                    FileOutputStream(file, true).use { fos ->
-                                        dataSocket.getInputStream().use { `is` ->
-                                            val buffer = ByteArray(64 * 1024)
-                                            var bytesRead: Int
-                                            while (`is`.read(buffer).also { bytesRead = it } != -1) {
-                                                fos.write(buffer, 0, bytesRead)
+                                val dataSocket = getDataSocket(pasvServer, activeHost, activePort)
+                                pasvServer = null
+                                if (dataSocket == null) {
+                                    send("425 Can't open data connection.")
+                                } else {
+                                    send("150 Appending to ${targetFile.name}")
+                                    try {
+                                        FileOutputStream(targetFile, true).use { fos ->
+                                            dataSocket.getInputStream().use { `is` ->
+                                                val buffer = ByteArray(64 * 1024)
+                                                var bytesRead: Int
+                                                while (`is`.read(buffer).also { bytesRead = it } != -1) {
+                                                    fos.write(buffer, 0, bytesRead)
+                                                }
+                                                fos.flush()
                                             }
-                                            fos.flush()
                                         }
+                                        send("226 Transfer complete.")
+                                    } catch (e: Exception) {
+                                        Log.e(tag, "APPE error", e)
+                                        send("426 Transfer aborted.")
+                                    } finally {
+                                        dataSocket.close()
                                     }
-                                    send("226 Transfer complete.")
-                                } catch (e: Exception) {
-                                    send("426 Transfer aborted.")
-                                } finally {
-                                    dataSocket.close()
                                 }
                             }
                         }
@@ -423,8 +554,10 @@ class SimpleFtpServer(
                         if (!isAuthenticated) {
                             send("530 Please login.")
                         } else {
-                            val file = resolveFile(currentDir, arg)
-                            if (file.exists() && file.isFile && file.delete()) {
+                            val resolved = resolveTarget(currentDir, arg)
+                            if (resolved !is ResolvedTarget.Real || resolved.file == rootDir || (sdCardDir != null && resolved.file == sdCardDir)) {
+                                send("550 Cannot delete device root folder.")
+                            } else if (resolved.file.exists() && resolved.file.isFile && resolved.file.delete()) {
                                 send("250 File deleted successfully.")
                             } else {
                                 send("550 Could not delete file.")
@@ -435,9 +568,11 @@ class SimpleFtpServer(
                         if (!isAuthenticated) {
                             send("530 Please login.")
                         } else {
-                            val target = resolveFile(currentDir, arg)
-                            if (target.mkdirs()) {
-                                send("257 \"${getVirtualPath(target)}\" created.")
+                            val targetDir = resolveWriteTarget(currentDir, arg)
+                            if (targetDir == null) {
+                                send("550 Cannot create directory in root. Please open the '$effectiveDeviceName' folder first.")
+                            } else if (targetDir.mkdirs() || targetDir.exists()) {
+                                send("257 \"${getVirtualPath(targetDir)}\" created.")
                             } else {
                                 send("550 Directory creation failed.")
                             }
@@ -447,8 +582,10 @@ class SimpleFtpServer(
                         if (!isAuthenticated) {
                             send("530 Please login.")
                         } else {
-                            val target = resolveFile(currentDir, arg)
-                            if (target.exists() && target.isDirectory && target.delete()) {
+                            val resolved = resolveTarget(currentDir, arg)
+                            if (resolved !is ResolvedTarget.Real || resolved.file == rootDir || (sdCardDir != null && resolved.file == sdCardDir)) {
+                                send("550 Cannot remove device root folder.")
+                            } else if (resolved.file.exists() && resolved.file.isDirectory && resolved.file.delete()) {
                                 send("250 Directory removed.")
                             } else {
                                 send("550 Could not remove directory.")
@@ -459,9 +596,11 @@ class SimpleFtpServer(
                         if (!isAuthenticated) {
                             send("530 Please login.")
                         } else {
-                            val file = resolveFile(currentDir, arg)
-                            if (file.exists()) {
-                                renameSource = file
+                            val resolved = resolveTarget(currentDir, arg)
+                            if (resolved !is ResolvedTarget.Real || resolved.file == rootDir || (sdCardDir != null && resolved.file == sdCardDir)) {
+                                send("550 Cannot rename device root folder.")
+                            } else if (resolved.file.exists()) {
+                                renameSource = resolved.file
                                 send("350 Ready for RNTO.")
                             } else {
                                 send("550 File not found.")
@@ -474,13 +613,17 @@ class SimpleFtpServer(
                         } else if (renameSource == null) {
                             send("503 Bad sequence of commands, use RNFR first.")
                         } else {
-                            val target = resolveFile(currentDir, arg)
-                            val success = renameSource!!.renameTo(target)
-                            renameSource = null
-                            if (success) {
-                                send("250 Rename successful.")
+                            val targetFile = resolveWriteTarget(currentDir, arg)
+                            if (targetFile == null) {
+                                send("550 Cannot rename to virtual root.")
                             } else {
-                                send("550 Rename failed.")
+                                val success = renameSource!!.renameTo(targetFile)
+                                renameSource = null
+                                if (success) {
+                                    send("250 Rename successful.")
+                                } else {
+                                    send("550 Rename failed.")
+                                }
                             }
                         }
                     }
@@ -488,11 +631,11 @@ class SimpleFtpServer(
                         if (!isAuthenticated) {
                             send("530 Please login.")
                         } else {
-                            val file = resolveFile(currentDir, arg)
-                            if (file.exists() && file.isFile) {
-                                send("213 ${file.length()}")
+                            val resolved = resolveTarget(currentDir, arg)
+                            if (resolved is ResolvedTarget.Real && resolved.file.exists() && resolved.file.isFile) {
+                                send("213 ${resolved.file.length()}")
                             } else {
-                                send("550 Could not get file size.")
+                                send("550 Could not get file size: Not a plain file.")
                             }
                         }
                     }
@@ -500,12 +643,12 @@ class SimpleFtpServer(
                         if (!isAuthenticated) {
                             send("530 Please login.")
                         } else {
-                            val file = resolveFile(currentDir, arg)
-                            if (file.exists()) {
+                            val resolved = resolveTarget(currentDir, arg)
+                            if (resolved is ResolvedTarget.Real && resolved.file.exists()) {
                                 val mdtmFormat = SimpleDateFormat("yyyyMMddHHmmss", Locale.US).apply {
                                     timeZone = TimeZone.getTimeZone("UTC")
                                 }
-                                send("213 ${mdtmFormat.format(Date(file.lastModified()))}")
+                                send("213 ${mdtmFormat.format(Date(resolved.file.lastModified()))}")
                             } else {
                                 send("550 Could not get file modification time.")
                             }
@@ -545,42 +688,213 @@ class SimpleFtpServer(
         }
     }
 
-    private fun resolveFile(current: File, path: String): File {
-        var clean = path.replace('\\', '/')
-        if (clean.startsWith("\"") && clean.endsWith("\"")) {
-            clean = clean.substring(1, clean.length - 1)
+    private fun extractPathFromListArg(arg: String): String {
+        val trimmed = arg.trim()
+        if (trimmed.isEmpty()) return ""
+        val tokens = trimmed.split(Regex("\\s+"))
+        val pathTokens = tokens.filterNot { it.startsWith("-") }
+        return pathTokens.joinToString(" ").trim()
+    }
+
+    private fun resolveWriteTarget(current: File?, path: String): File? {
+        val resolved = resolveTarget(current, path)
+        return when (resolved) {
+            is ResolvedTarget.Real -> resolved.file
+            is ResolvedTarget.VirtualRoot -> null
+            is ResolvedTarget.Invalid -> {
+                var clean = path.replace('\\', '/').trim().trim('\"')
+                try {
+                    if (clean.contains("%")) {
+                        clean = java.net.URLDecoder.decode(clean, "UTF-8")
+                    }
+                } catch (_: Exception) {}
+                clean = clean.replace(Regex("/+"), "/")
+                if (!showDeviceFolder) {
+                    val candidate = if (clean.startsWith("/")) {
+                        File(rootDir, clean.trimStart('/')).canonicalFile
+                    } else if (current != null) {
+                        File(current, clean).canonicalFile
+                    } else {
+                        File(rootDir, clean).canonicalFile
+                    }
+                    if (isChildOrSame(candidate, rootDir)) candidate else null
+                } else if (current != null) {
+                    val candidate = File(current, clean).canonicalFile
+                    if (isChildOrSame(candidate, rootDir) || (sdCardDir != null && isChildOrSame(candidate, sdCardDir!!))) {
+                        candidate
+                    } else null
+                } else {
+                    val trimmed = clean.trimStart('/')
+                    if (trimmed.startsWith("$effectiveDeviceName/", ignoreCase = true)) {
+                        val sub = trimmed.substring(effectiveDeviceName.length + 1)
+                        val candidate = File(rootDir, sub).canonicalFile
+                        if (isChildOrSame(candidate, rootDir)) candidate else null
+                    } else if (sdCardDir != null && trimmed.startsWith("SD Card/", ignoreCase = true)) {
+                        val sub = trimmed.substring("SD Card/".length)
+                        val candidate = File(sdCardDir!!, sub).canonicalFile
+                        if (isChildOrSame(candidate, sdCardDir!!)) candidate else null
+                    } else {
+                        null
+                    }
+                }
+            }
         }
-        val target = if (clean.startsWith("/")) {
-            File(rootDir, clean.trimStart('/'))
-        } else {
-            File(current, clean)
+    }
+
+    private fun resolveTarget(current: File?, path: String): ResolvedTarget {
+        var clean = path.replace('\\', '/').trim()
+        if (clean.startsWith("\"") && clean.endsWith("\"") && clean.length >= 2) {
+            clean = clean.substring(1, clean.length - 1).trim()
         }
-        val canonical = target.canonicalFile
-        return if (isChildOrSame(canonical, rootDir)) {
-            canonical
+        try {
+            if (clean.contains("%")) {
+                clean = java.net.URLDecoder.decode(clean, "UTF-8")
+            }
+        } catch (_: Exception) {}
+        clean = clean.replace(Regex("/+"), "/")
+
+        if (!showDeviceFolder) {
+            if (clean.isEmpty() || clean == "." || clean == "./") {
+                val c = current ?: rootDir
+                return ResolvedTarget.Real(c, isChildOrSame(c, rootDir))
+            }
+            if (clean == "/") {
+                return ResolvedTarget.Real(rootDir, true)
+            }
+            if (clean == "..") {
+                val c = current ?: rootDir
+                val parent = c.parentFile
+                return if (parent != null && isChildOrSame(parent, rootDir)) {
+                    ResolvedTarget.Real(parent, true)
+                } else {
+                    ResolvedTarget.Real(rootDir, true)
+                }
+            }
+            val target = if (clean.startsWith("/")) {
+                File(rootDir, clean.trimStart('/')).canonicalFile
+            } else {
+                File(current ?: rootDir, clean).canonicalFile
+            }
+            return if (isChildOrSame(target, rootDir)) ResolvedTarget.Real(target, true) else ResolvedTarget.Invalid
+        }
+
+        if (clean.isEmpty() || clean == "." || clean == "./") {
+            return if (current == null) ResolvedTarget.VirtualRoot else ResolvedTarget.Real(current, isChildOrSame(current, rootDir))
+        }
+        if (clean == "/") {
+            return ResolvedTarget.VirtualRoot
+        }
+        while (clean.length > 1 && clean.endsWith("/")) {
+            clean = clean.substring(0, clean.length - 1)
+        }
+        if (clean == "..") {
+            if (current == null) return ResolvedTarget.VirtualRoot
+            if (current == rootDir || (sdCardDir != null && current == sdCardDir)) {
+                return ResolvedTarget.VirtualRoot
+            }
+            val parent = current.parentFile
+            return if (parent != null && isChildOrSame(parent, rootDir)) {
+                ResolvedTarget.Real(parent, true)
+            } else if (parent != null && sdCardDir != null && isChildOrSame(parent, sdCardDir!!)) {
+                ResolvedTarget.Real(parent, false)
+            } else {
+                ResolvedTarget.VirtualRoot
+            }
+        }
+
+        val trimmed = clean.trimStart('/')
+        if (trimmed.equals(effectiveDeviceName, ignoreCase = true)) {
+            return ResolvedTarget.Real(rootDir, true)
+        }
+        if (trimmed.startsWith("$effectiveDeviceName/", ignoreCase = true)) {
+            val sub = trimmed.substring(effectiveDeviceName.length + 1)
+            val target = File(rootDir, sub).canonicalFile
+            return if (isChildOrSame(target, rootDir)) ResolvedTarget.Real(target, true) else ResolvedTarget.Invalid
+        }
+        if (sdCardDir != null) {
+            if (trimmed.equals("SD Card", ignoreCase = true)) {
+                return ResolvedTarget.Real(sdCardDir!!, false)
+            }
+            if (trimmed.startsWith("SD Card/", ignoreCase = true)) {
+                val sub = trimmed.substring("SD Card/".length)
+                val target = File(sdCardDir!!, sub).canonicalFile
+                return if (isChildOrSame(target, sdCardDir!!)) ResolvedTarget.Real(target, false) else ResolvedTarget.Invalid
+            }
+        }
+        if (clean.startsWith("/")) {
+            val fallback = File(rootDir, trimmed).canonicalFile
+            if (isChildOrSame(fallback, rootDir) && fallback.exists()) {
+                return ResolvedTarget.Real(fallback, true)
+            }
+            return ResolvedTarget.Invalid
+        }
+        if (current == null) {
+            val fallback = File(rootDir, clean).canonicalFile
+            if (isChildOrSame(fallback, rootDir) && fallback.exists()) {
+                return ResolvedTarget.Real(fallback, true)
+            }
+            return ResolvedTarget.Invalid
         } else {
-            rootDir
+            val target = File(current, clean).canonicalFile
+            if (isChildOrSame(target, rootDir)) {
+                return ResolvedTarget.Real(target, true)
+            }
+            if (sdCardDir != null && isChildOrSame(target, sdCardDir!!)) {
+                return ResolvedTarget.Real(target, false)
+            }
+            return ResolvedTarget.VirtualRoot
         }
     }
 
     private fun isChildOrSame(file: File, parent: File): Boolean {
-        var current: File? = file
-        while (current != null) {
-            if (current == parent) return true
-            current = current.parentFile
+        var c: File? = file
+        while (c != null) {
+            if (c == parent) return true
+            c = c.parentFile
         }
         return false
     }
 
-    private fun getVirtualPath(file: File): String {
-        val rootPath = rootDir.canonicalPath
-        val filePath = file.canonicalPath
-        return if (filePath == rootPath) {
-            "/"
-        } else if (filePath.startsWith(rootPath)) {
-            filePath.substring(rootPath.length).replace('\\', '/')
-        } else {
-            "/"
+    private fun getVirtualPath(file: File?): String {
+        if (!showDeviceFolder) {
+            if (file == null) return "/"
+            val rootCanonical = rootDir.canonicalPath
+            val fileCanonical = file.canonicalPath
+            if (fileCanonical == rootCanonical) return "/"
+            if (fileCanonical.startsWith(rootCanonical)) {
+                val rel = fileCanonical.substring(rootCanonical.length).replace('\\', '/')
+                return if (rel.startsWith("/")) rel else "/$rel"
+            }
+            if (sdCardDir != null) {
+                val sdCanonical = sdCardDir!!.canonicalPath
+                if (fileCanonical == sdCanonical) return "/SD Card"
+                if (fileCanonical.startsWith(sdCanonical)) {
+                    val rel = fileCanonical.substring(sdCanonical.length).replace('\\', '/')
+                    return "/SD Card$rel"
+                }
+            }
+            return "/"
         }
+        if (file == null) return "/"
+        val rootCanonical = rootDir.canonicalPath
+        val fileCanonical = file.canonicalPath
+        if (fileCanonical == rootCanonical) {
+            return "/$effectiveDeviceName"
+        }
+        if (fileCanonical.startsWith(rootCanonical)) {
+            val rel = fileCanonical.substring(rootCanonical.length).replace('\\', '/')
+            return "/$effectiveDeviceName$rel"
+        }
+        if (sdCardDir != null) {
+            val sdCanonical = sdCardDir!!.canonicalPath
+            if (fileCanonical == sdCanonical) {
+                return "/SD Card"
+            }
+            if (fileCanonical.startsWith(sdCanonical)) {
+                val rel = fileCanonical.substring(sdCanonical.length).replace('\\', '/')
+                return "/SD Card$rel"
+            }
+        }
+        return "/"
     }
 }

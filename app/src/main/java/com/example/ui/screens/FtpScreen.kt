@@ -16,7 +16,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -34,10 +33,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Refresh
@@ -48,14 +45,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
@@ -90,6 +84,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.ftp.DeviceNameHelper
 import com.example.ftp.FtpServerManager
 import com.example.ftp.NetworkHelper
 import com.example.ftp.NetworkInfo
@@ -111,7 +106,7 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FtpScreen(
-    onNavigateToPeerHost: () -> Unit
+    onStoragePermissionGranted: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -121,8 +116,8 @@ fun FtpScreen(
     var showPermissionDialog by remember { mutableStateOf(false) }
     var showNoNetworkDialog by remember { mutableStateOf(false) }
 
-    // Periodically refresh network status to catch hotspot / Wi-Fi toggles
     LaunchedEffect(Unit) {
+        FtpServerManager.initDefaults(context)
         while (isActive) {
             val info = NetworkHelper.getNetworkInfo(context)
             networkInfo = info
@@ -149,7 +144,11 @@ fun FtpScreen(
 
     val legacyStorageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
-    ) { _ -> }
+    ) { granted ->
+        if (granted) {
+            onStoragePermissionGranted()
+        }
+    }
 
     fun hasFullStoragePermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -198,10 +197,6 @@ fun FtpScreen(
                     onRefreshNetwork = {
                         networkInfo = NetworkHelper.getNetworkInfo(context)
                         Toast.makeText(context, "Network status refreshed", Toast.LENGTH_SHORT).show()
-                    },
-                    onOpenPeerHost = {
-                        coroutineScope.launch { drawerState.close() }
-                        onNavigateToPeerHost()
                     }
                 )
             }
@@ -226,18 +221,6 @@ fun FtpScreen(
                             Icon(
                                 imageVector = Icons.Default.Menu,
                                 contentDescription = "Menu",
-                                tint = Color.White
-                            )
-                        }
-                    },
-                    actions = {
-                        IconButton(
-                            onClick = onNavigateToPeerHost,
-                            modifier = Modifier.testTag("peer_host_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Hub,
-                                contentDescription = "Remote Peer Host",
                                 tint = Color.White
                             )
                         }
@@ -279,6 +262,8 @@ fun FtpScreen(
                         onCheckStoragePermission = {
                             if (!hasFullStoragePermission()) {
                                 showPermissionDialog = true
+                            } else {
+                                onStoragePermissionGranted()
                             }
                         },
                         onNoNetwork = {
@@ -294,6 +279,7 @@ fun FtpScreen(
         ConnectionGuideDialog(
             primaryIp = networkInfo.primaryIp,
             port = FtpServerManager.port.collectAsState().value,
+            deviceName = FtpServerManager.deviceName.collectAsState().value,
             onDismiss = { showGuideDialog = false }
         )
     }
@@ -352,7 +338,7 @@ fun FtpScreen(
             title = { Text("Storage Access") },
             text = {
                 Text(
-                    "To access all files and folders (e.g. Downloads, Photos, Documents) over FTP, please allow All Files Access. Otherwise, only app-specific files will be accessible."
+                    "To access all files and folders (e.g. Downloads, Photos, Documents) over FTP and stream media files, please allow All Files Access."
                 )
             },
             confirmButton = {
@@ -385,12 +371,12 @@ fun FtpCard(
     val isRunning by FtpServerManager.isRunning.collectAsState()
     val port by FtpServerManager.port.collectAsState()
     val password by FtpServerManager.password.collectAsState()
-    val isRandomPassword by FtpServerManager.isRandomPassword.collectAsState()
-    val showHiddenFiles by FtpServerManager.showHiddenFiles.collectAsState()
+    val deviceName by FtpServerManager.deviceName.collectAsState()
     val errorMessage by FtpServerManager.errorMessage.collectAsState()
 
     var portInput by remember(port) { mutableStateOf(port.toString()) }
     var passwordInput by remember(password) { mutableStateOf(password) }
+    var deviceNameInput by remember(deviceName) { mutableStateOf(deviceName) }
 
     Card(
         modifier = Modifier
@@ -407,39 +393,7 @@ fun FtpCard(
                     .padding(horizontal = 24.dp, vertical = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Row 1: Random password checkbox
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = !isRunning) {
-                            FtpServerManager.setRandomPassword(!isRandomPassword)
-                        }
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(
-                        checked = isRandomPassword,
-                        onCheckedChange = { checked ->
-                            FtpServerManager.setRandomPassword(checked)
-                        },
-                        enabled = !isRunning,
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = CyanBorder,
-                            uncheckedColor = TextSecondary
-                        ),
-                        modifier = Modifier.testTag("random_password_checkbox")
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Random password",
-                        fontSize = 16.sp,
-                        color = if (isRunning) TextSecondary else TextDark
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Row 2: Port row
+                // Row 1: Port row
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -496,7 +450,7 @@ fun FtpCard(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Row 3: Password row
+                // Row 2: Password row
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -516,17 +470,17 @@ fun FtpCard(
                     ) {
                         Column {
                             BasicTextField(
-                                value = if (isRandomPassword) password else passwordInput,
+                                value = passwordInput,
                                 onValueChange = { input ->
-                                    if (!isRunning && !isRandomPassword) {
+                                    if (!isRunning) {
                                         passwordInput = input
                                         FtpServerManager.setPassword(input)
                                     }
                                 },
-                                enabled = !isRunning && !isRandomPassword,
+                                enabled = !isRunning,
                                 textStyle = TextStyle(
                                     fontSize = 17.sp,
-                                    color = if (isRunning || isRandomPassword) TextSecondary else TextDark,
+                                    color = if (isRunning) TextSecondary else TextDark,
                                     fontWeight = FontWeight.Normal
                                 ),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
@@ -541,41 +495,63 @@ fun FtpCard(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(1.dp)
-                                    .background(if (isRunning || isRandomPassword) Color(0xFFCCCCCC) else Color(0xFF9E9E9E))
+                                    .background(if (isRunning) Color(0xFFCCCCCC) else Color(0xFF9E9E9E))
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-                // Row 4: Show hidden files checkbox
+                // Row 3: Folder name row
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
-                            FtpServerManager.setShowHiddenFiles(!showHiddenFiles)
-                        }
-                        .padding(vertical = 4.dp),
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Checkbox(
-                        checked = showHiddenFiles,
-                        onCheckedChange = { checked ->
-                            FtpServerManager.setShowHiddenFiles(checked)
-                        },
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = CyanBorder,
-                            uncheckedColor = TextSecondary
-                        ),
-                        modifier = Modifier.testTag("show_hidden_files_checkbox")
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Show hidden files",
+                        text = "Folder name",
                         fontSize = 16.sp,
-                        color = TextDark
+                        color = TextSecondary,
+                        modifier = Modifier.width(90.dp)
                     )
+                    Box(
+                        modifier = Modifier
+                            .width(170.dp)
+                            .padding(bottom = 2.dp)
+                    ) {
+                        Column {
+                            BasicTextField(
+                                value = deviceNameInput,
+                                onValueChange = { input ->
+                                    if (!isRunning) {
+                                        deviceNameInput = input
+                                        FtpServerManager.setDeviceName(input)
+                                    }
+                                },
+                                enabled = !isRunning,
+                                textStyle = TextStyle(
+                                    fontSize = 17.sp,
+                                    color = if (isRunning) TextSecondary else TextDark,
+                                    fontWeight = FontWeight.Normal
+                                ),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                                singleLine = true,
+                                cursorBrush = SolidColor(CyanBorder),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("device_name_input")
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(1.dp)
+                                    .background(if (isRunning) Color(0xFFCCCCCC) else Color(0xFF9E9E9E))
+                            )
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(18.dp))
@@ -610,10 +586,14 @@ fun FtpCard(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
+                val isNetworkActive = networkInfo.isAvailable &&
+                        networkInfo.primaryIp.isNotEmpty() &&
+                        (networkInfo.isWifiConnected || networkInfo.isHotspotOn)
+
                 Button(
                     onClick = {
                         val currentNet = NetworkHelper.getNetworkInfo(context)
-                        if (!currentNet.isAvailable || currentNet.primaryIp.isEmpty()) {
+                        if (!currentNet.isAvailable || currentNet.primaryIp.isEmpty() || (!currentNet.isWifiConnected && !currentNet.isHotspotOn)) {
                             Toast.makeText(
                                 context,
                                 "Please connect to Wi-Fi or turn on Hotspot first",
@@ -630,7 +610,13 @@ fun FtpCard(
                             startedOnWifi = currentNet.isWifiConnected
                         )
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = TealPrimary),
+                    enabled = isNetworkActive,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = TealPrimary,
+                        contentColor = Color.White,
+                        disabledContainerColor = Color(0xFFE0E0E0),
+                        disabledContentColor = Color(0xFF9E9E9E)
+                    ),
                     shape = RoundedCornerShape(4.dp),
                     modifier = Modifier
                         .fillMaxWidth(0.85f)
@@ -639,7 +625,6 @@ fun FtpCard(
                 ) {
                     Text(
                         text = "START SERVICE",
-                        color = Color.White,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -707,7 +692,25 @@ fun FtpCard(
                     modifier = Modifier.testTag("ftp_password_text")
                 )
 
-                Spacer(modifier = Modifier.height(28.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "Root Folder",
+                    fontSize = 15.sp,
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = deviceName,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TealPrimary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("ftp_root_folder_text")
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
 
                 HorizontalDivider(
                     color = CyanBorder.copy(alpha = 0.7f),
@@ -764,8 +767,7 @@ fun DrawerContent(
     networkInfo: NetworkInfo,
     onOpenGuide: () -> Unit,
     onRequestStorage: () -> Unit,
-    onRefreshNetwork: () -> Unit,
-    onOpenPeerHost: () -> Unit
+    onRefreshNetwork: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -802,14 +804,6 @@ fun DrawerContent(
             icon = { Icon(Icons.Default.Folder, contentDescription = null, tint = TealPrimary) },
             selected = false,
             onClick = onRequestStorage,
-            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-        )
-
-        NavigationDrawerItem(
-            label = { Text("Remote Peer Host Vault") },
-            icon = { Icon(Icons.Default.Hub, contentDescription = null, tint = TealPrimary) },
-            selected = false,
-            onClick = onOpenPeerHost,
             modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
         )
 
@@ -852,6 +846,13 @@ fun DrawerContent(
                     color = TextSecondary,
                     fontFamily = FontFamily.Monospace
                 )
+                Spacer(modifier = Modifier.height(2.dp))
+                val deviceName = FtpServerManager.deviceName.collectAsState().value
+                Text(
+                    text = "Folder: $deviceName",
+                    fontSize = 12.sp,
+                    color = TextSecondary
+                )
             }
         }
     }
@@ -861,6 +862,7 @@ fun DrawerContent(
 fun ConnectionGuideDialog(
     primaryIp: String,
     port: Int,
+    deviceName: String = "Android Device",
     onDismiss: () -> Unit
 ) {
     val ftpAddress = "ftp://$primaryIp:$port/"
@@ -899,7 +901,7 @@ fun ConnectionGuideDialog(
                     color = TealDark
                 )
                 Text(
-                    text = "  Open File Explorer (Win + E)\n  Click on the address bar at the top\n  Type:\n  $ftpAddress\n  Press Enter to browse and drag-and-drop files!",
+                    text = "  Open File Explorer (Win + E)\n  Click on the address bar at the top\n  Type:\n  $ftpAddress\n  Press Enter\n  Double-click the '$deviceName' folder to browse and transfer files!",
                     fontSize = 14.sp,
                     color = TextDark,
                     modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
@@ -912,7 +914,7 @@ fun ConnectionGuideDialog(
                     color = TealDark
                 )
                 Text(
-                    text = "  Open Finder and press Command + K\n  Enter: $ftpAddress\n  Click Connect.",
+                    text = "  Open Finder and press Command + K\n  Enter: $ftpAddress\n  Click Connect\n  Open the '$deviceName' folder to view files.",
                     fontSize = 14.sp,
                     color = TextDark,
                     modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
@@ -925,7 +927,7 @@ fun ConnectionGuideDialog(
                     color = TealDark
                 )
                 Text(
-                    text = "  Host: $primaryIp\n  Port: $port\n  Encryption: Plain FTP\n  Logon Type: Normal or Anonymous",
+                    text = "  Host: $primaryIp\n  Port: $port\n  Encryption: Plain FTP\n  Logon Type: Normal or Anonymous\n  Root displays '$deviceName' containing your storage files.",
                     fontSize = 14.sp,
                     color = TextDark,
                     modifier = Modifier.padding(top = 4.dp)

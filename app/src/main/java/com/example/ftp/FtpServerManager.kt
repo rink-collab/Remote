@@ -23,6 +23,12 @@ object FtpServerManager {
     private val _showHiddenFiles = MutableStateFlow(false)
     val showHiddenFiles: StateFlow<Boolean> = _showHiddenFiles.asStateFlow()
 
+    private val _showDeviceFolder = MutableStateFlow(true)
+    val showDeviceFolder: StateFlow<Boolean> = _showDeviceFolder.asStateFlow()
+
+    private val _deviceName = MutableStateFlow("Android Device")
+    val deviceName: StateFlow<String> = _deviceName.asStateFlow()
+
     private val _activeClients = MutableStateFlow(0)
     val activeClients: StateFlow<Int> = _activeClients.asStateFlow()
 
@@ -64,6 +70,25 @@ object FtpServerManager {
         _showHiddenFiles.value = show
     }
 
+    fun setShowDeviceFolder(show: Boolean) {
+        if (!_isRunning.value) {
+            _showDeviceFolder.value = show
+        }
+    }
+
+    fun initDefaults(context: Context) {
+        if (_deviceName.value == "Android Device") {
+            _deviceName.value = DeviceNameHelper.getDeviceName(context)
+        }
+    }
+
+    fun setDeviceName(name: String) {
+        if (!_isRunning.value) {
+            val sanitized = DeviceNameHelper.sanitize(name).ifEmpty { "Android Device" }
+            _deviceName.value = sanitized
+        }
+    }
+
     fun startService(
         context: Context,
         ipAddress: String,
@@ -79,6 +104,8 @@ object FtpServerManager {
             putExtra(FtpService.EXTRA_PORT, _port.value)
             putExtra(FtpService.EXTRA_PASSWORD, _password.value)
             putExtra(FtpService.EXTRA_SHOW_HIDDEN, _showHiddenFiles.value)
+            putExtra(FtpService.EXTRA_SHOW_DEVICE_FOLDER, _showDeviceFolder.value)
+            putExtra(FtpService.EXTRA_DEVICE_NAME, _deviceName.value)
             putExtra(FtpService.EXTRA_IP, ipAddress)
             putExtra(FtpService.EXTRA_STARTED_ON_HOTSPOT, startedOnHotspot)
             putExtra(FtpService.EXTRA_STARTED_ON_WIFI, startedOnWifi)

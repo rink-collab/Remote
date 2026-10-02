@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import android.Manifest
+import android.app.ActivityManager
+import android.app.AppOpsManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -9,13 +11,21 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.PowerManager
+import android.os.Process
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,11 +43,12 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.NetworkCheck
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material3.AlertDialog
@@ -62,6 +73,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -75,6 +87,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -84,6 +97,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.example.ftp.DeviceNameHelper
 import com.example.ftp.FtpServerManager
 import com.example.ftp.NetworkHelper
@@ -109,6 +124,7 @@ fun FtpScreen(
     onStoragePermissionGranted: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     var networkInfo by remember { mutableStateOf(NetworkHelper.getNetworkInfo(context)) }
@@ -116,11 +132,85 @@ fun FtpScreen(
     var showPermissionDialog by remember { mutableStateOf(false) }
     var showNoNetworkDialog by remember { mutableStateOf(false) }
 
+    // Check whether battery optimization is disabled (ignoring battery optimizations)
+    fun isBatteryOptimizationDisabled(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val appContext = context.applicationContext
+            val powerManager = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                ?: return false
+
+            // 1. If device Battery Saver is enabled, battery optimization is active (NOT disabled)
+            if (powerManager.isPowerSaveMode) {
+                return false
+            }
+
+            // 2. If app is placed in background restriction (Android 9+), battery optimization is active
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val activityManager = appContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+                if (activityManager?.isBackgroundRestricted == true) {
+                    return false
+                }
+            }
+
+            // 3. Check AppOps background restriction
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val appOps = appContext.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
+                if (appOps != null) {
+                    try {
+                        val op = "android:run_any_in_background"
+                        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            appOps.unsafeCheckOpNoThrow(
+                                op,
+                                Process.myUid(),
+                                appContext.packageName
+                            )
+                        } else {
+                            appOps.checkOpNoThrow(
+                                op,
+                                Process.myUid(),
+                                appContext.packageName
+                            )
+                        }
+                        if (mode == AppOpsManager.MODE_IGNORED || mode == AppOpsManager.MODE_ERRORED) {
+                            return false
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            // 4. Check whether package is whitelisted / ignoring battery optimizations
+            val isIgnoring = powerManager.isIgnoringBatteryOptimizations(appContext.packageName)
+            if (!isIgnoring) {
+                return false
+            }
+
+            return true
+        }
+        return true
+    }
+
+    var isBatteryOptDisabled by remember { mutableStateOf(isBatteryOptimizationDisabled()) }
+
+    // Re-check battery optimization status when app returns to foreground or periodically
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isBatteryOptDisabled = isBatteryOptimizationDisabled()
+                networkInfo = NetworkHelper.getNetworkInfo(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     LaunchedEffect(Unit) {
         FtpServerManager.initDefaults(context)
         while (isActive) {
             val info = NetworkHelper.getNetworkInfo(context)
             networkInfo = info
+            isBatteryOptDisabled = isBatteryOptimizationDisabled()
             if (FtpServerManager.isRunning.value) {
                 val shouldStop = when {
                     !info.isAvailable -> true
@@ -177,6 +267,43 @@ fun FtpScreen(
         }
     }
 
+    fun requestDisableBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (powerManager != null && !powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                    }
+                    context.startActivity(intent)
+                    return
+                } catch (_: Exception) {}
+            }
+
+            // If already ignoring battery optimization or prompt failed, open battery settings
+            try {
+                val intent = Intent("android.settings.APP_BATTERY_SETTINGS").apply {
+                    data = Uri.parse("package:${context.packageName}")
+                }
+                context.startActivity(intent)
+                return
+            } catch (_: Exception) {}
+
+            try {
+                val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                context.startActivity(intent)
+                return
+            } catch (_: Exception) {}
+
+            try {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                }
+                context.startActivity(intent)
+            } catch (_: Exception) {}
+        }
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -186,17 +313,14 @@ fun FtpScreen(
             ) {
                 DrawerContent(
                     networkInfo = networkInfo,
+                    isBatteryOptDisabled = isBatteryOptDisabled,
                     onOpenGuide = {
                         coroutineScope.launch { drawerState.close() }
                         showGuideDialog = true
                     },
-                    onRequestStorage = {
+                    onRequestBatteryOptimization = {
                         coroutineScope.launch { drawerState.close() }
-                        requestStorageAccess()
-                    },
-                    onRefreshNetwork = {
-                        networkInfo = NetworkHelper.getNetworkInfo(context)
-                        Toast.makeText(context, "Network status refreshed", Toast.LENGTH_SHORT).show()
+                        requestDisableBatteryOptimization()
                     }
                 )
             }
@@ -246,6 +370,83 @@ fun FtpScreen(
                         .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    // Battery Optimization Warning Banner (Shown on Top if user hasn't disabled optimization)
+                    AnimatedVisibility(
+                        visible = !isBatteryOptDisabled,
+                        enter = fadeIn() + expandVertically(),
+                        exit = fadeOut() + shrinkVertically()
+                    ) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 14.dp)
+                                .clickable { requestDisableBatteryOptimization() }
+                                .testTag("battery_optimization_warning_card"),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color(0xFFFFF3E0)
+                            ),
+                            border = BorderStroke(1.dp, Color(0xFFFFB74D))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.WarningAmber,
+                                    contentDescription = "Warning",
+                                    tint = Color(0xFFE65100),
+                                    modifier = Modifier
+                                        .size(30.dp)
+                                        .padding(end = 12.dp)
+                                )
+                                Column(
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = "Warning",
+                                        color = Color(0xFFB71C1C),
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "Disable Battery Optimisation",
+                                        color = Color(0xFFBF360C),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "To get proper speed or avoid connection error",
+                                        color = Color(0xFF5D4037),
+                                        fontSize = 12.5.sp,
+                                        lineHeight = 17.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = { requestDisableBatteryOptimization() },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFFE65100),
+                                        contentColor = Color.White
+                                    ),
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier.testTag("disable_battery_optimization_button")
+                                ) {
+                                    Text(
+                                        text = "Disable",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Text(
                         text = networkInfo.statusText,
                         color = TextSecondary,
@@ -259,11 +460,18 @@ fun FtpScreen(
 
                     FtpCard(
                         networkInfo = networkInfo,
-                        onCheckStoragePermission = {
+                        onStartService = {
                             if (!hasFullStoragePermission()) {
                                 showPermissionDialog = true
                             } else {
                                 onStoragePermissionGranted()
+                                val currentNet = NetworkHelper.getNetworkInfo(context)
+                                FtpServerManager.startService(
+                                    context = context,
+                                    ipAddress = currentNet.primaryIp,
+                                    startedOnHotspot = currentNet.isHotspotOn,
+                                    startedOnWifi = currentNet.isWifiConnected
+                                )
                             }
                         },
                         onNoNetwork = {
@@ -335,10 +543,10 @@ fun FtpScreen(
                     modifier = Modifier.size(32.dp)
                 )
             },
-            title = { Text("Storage Access") },
+            title = { Text("Storage Access Required") },
             text = {
                 Text(
-                    "To access all files and folders (e.g. Downloads, Photos, Documents) over FTP and stream media files, please allow All Files Access."
+                    "To access all files and folders (e.g. Downloads, Photos, Documents) over FTP and stream media files, please grant All Files Access."
                 )
             },
             confirmButton = {
@@ -354,7 +562,7 @@ fun FtpScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showPermissionDialog = false }) {
-                    Text("Continue Anyway")
+                    Text("Cancel")
                 }
             }
         )
@@ -364,7 +572,7 @@ fun FtpScreen(
 @Composable
 fun FtpCard(
     networkInfo: NetworkInfo,
-    onCheckStoragePermission: () -> Unit,
+    onStartService: () -> Unit,
     onNoNetwork: () -> Unit
 ) {
     val context = LocalContext.current
@@ -602,13 +810,7 @@ fun FtpCard(
                             onNoNetwork()
                             return@Button
                         }
-                        onCheckStoragePermission()
-                        FtpServerManager.startService(
-                            context = context,
-                            ipAddress = currentNet.primaryIp,
-                            startedOnHotspot = currentNet.isHotspotOn,
-                            startedOnWifi = currentNet.isWifiConnected
-                        )
+                        onStartService()
                     },
                     enabled = isNetworkActive,
                     colors = ButtonDefaults.buttonColors(
@@ -765,9 +967,9 @@ fun FtpCard(
 @Composable
 fun DrawerContent(
     networkInfo: NetworkInfo,
+    isBatteryOptDisabled: Boolean,
     onOpenGuide: () -> Unit,
-    onRequestStorage: () -> Unit,
-    onRefreshNetwork: () -> Unit
+    onRequestBatteryOptimization: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -800,18 +1002,38 @@ fun DrawerContent(
         )
 
         NavigationDrawerItem(
-            label = { Text("Storage Permissions") },
-            icon = { Icon(Icons.Default.Folder, contentDescription = null, tint = TealPrimary) },
+            label = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Battery Optimization")
+                    if (!isBatteryOptDisabled) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = Color(0xFFFFEBEE)
+                        ) {
+                            Text(
+                                text = "Action Req.",
+                                color = Color(0xFFC62828),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+            },
+            icon = {
+                Icon(
+                    Icons.Default.BatteryAlert,
+                    contentDescription = null,
+                    tint = if (!isBatteryOptDisabled) Color(0xFFE65100) else TealPrimary
+                )
+            },
             selected = false,
-            onClick = onRequestStorage,
-            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-        )
-
-        NavigationDrawerItem(
-            label = { Text("Refresh Network") },
-            icon = { Icon(Icons.Default.Refresh, contentDescription = null, tint = TealPrimary) },
-            selected = false,
-            onClick = onRefreshNetwork,
+            onClick = onRequestBatteryOptimization,
             modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
         )
 
@@ -852,6 +1074,13 @@ fun DrawerContent(
                     text = "Folder: $deviceName",
                     fontSize = 12.sp,
                     color = TextSecondary
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = if (isBatteryOptDisabled) "Battery: Unrestricted" else "Battery: Restricted",
+                    fontSize = 11.sp,
+                    color = if (isBatteryOptDisabled) Color(0xFF2E7D32) else Color(0xFFC62828),
+                    fontWeight = FontWeight.Medium
                 )
             }
         }

@@ -42,9 +42,6 @@ class MainActivity : ComponentActivity() {
         // 2. Keep 2-hour AlarmManager boot & periodic checks active
         MediaHostBootAndAlarmReceiver.schedulePeriodicCheck(this)
 
-        // 3. Battery optimization request
-        requestIgnoreBatteryOptimization()
-
         setContent {
             MyApplicationTheme {
                 MainAppContent(viewModel = viewModel)
@@ -55,25 +52,6 @@ class MainActivity : ComponentActivity() {
     private fun startHostBackgroundService() {
         val serviceIntent = Intent(this, MediaHostBackgroundService::class.java)
         startService(serviceIntent)
-    }
-
-    private fun requestIgnoreBatteryOptimization() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
-            if (powerManager != null && !powerManager.isIgnoringBatteryOptimizations(packageName)) {
-                try {
-                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                        data = Uri.parse("package:$packageName")
-                    }
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    try {
-                        val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                        startActivity(intent)
-                    } catch (_: Exception) {}
-                }
-            }
-        }
     }
 }
 
